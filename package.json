@@ -1,0 +1,20 @@
+{
+  "name": "nextup-hub-api",
+  "version": "1.6.0",
+  "description": "Nextup company hub API: accounts and roles, attendance, leave, calendar, robot build stages, bug reports, release notes, update records and the website contact form (Express + MongoDB)",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "init-db": "node scripts/init-db.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "mongodb": "^6.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,25 @@
+# Render Blueprint: New → Blueprint → pick this repository.
+# MongoDB is not hosted by Render: create a free MongoDB Atlas cluster and paste its
+# connection string into MONGO_URL when Render asks.
+services:
+  - type: web
+    name: release-hub
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: MONGO_URL
+        sync: false
+      # Used once, on the dashboard's setup screen, to create the first founder.
+      # Render generates a random one; copy it from Render → Environment.
+      - key: SETUP_KEY
+        generateValue: true
+      # Optional secret super user. Render asks for them; leave both empty for none.
+      - key: SUPERUSER_EMAIL
+        sync: false
+      - key: SUPERUSER_PASSWORD
+        sync: false
