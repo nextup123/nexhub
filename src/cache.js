@@ -20,7 +20,6 @@
 
 const crypto = require('crypto');
 
-const PREFIX = 'nx:';
 const OP_TIMEOUT_MS = 300;
 const fresh = () => `${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 const withTimeout = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('cache timeout')), OP_TIMEOUT_MS).unref())]);
@@ -44,7 +43,8 @@ function memoryStore() {
   };
 }
 
-function createCache({ url = '', ttl = 60, log = console, store } = {}) {
+function createCache({ url = '', ttl = 60, log = console, store, prefix = 'nx:' } = {}) {
+  const PREFIX = prefix;
   let client = store || null;
   let kind = store ? 'memory' : 'off';
   let lastError = '';

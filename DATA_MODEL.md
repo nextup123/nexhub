@@ -335,6 +335,8 @@ temporary password is changed).
 | `GET /users?all=true` | everyone (`all` for HR, founders) | directory |
 | `POST /users`, `PATCH /users/:id`, `POST /users/:id/password` | HR, founders | add (returns `temporaryPassword`), change, reset password |
 | `GET /home` | signed in | counts for the home page, by role |
+| `GET /stream` | signed in | server-sent events: `change {area}` (reload), `notify {kind, id, ref, title, body}` for new enquiries (`enquiries.view`) and bug reports (`bugs.view`) |
+| `GET /notifications/telegram`, `GET /notifications/telegram/chats`, `POST /notifications/telegram/test` | founders | Telegram status, chats that messaged the bot, a test message |
 | `POST /attendance/check-in`, `POST /attendance/check-out` | everyone | `{mode, note}` |
 | `GET /attendance/today` | everyone | own day, and the team's or everyone's board |
 | `GET /attendance/month?month=2026-11&team=` | everyone (own), leads (team), HR/founders (all) | grid and totals |

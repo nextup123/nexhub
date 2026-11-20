@@ -39,6 +39,8 @@ Only two are required:
 | `SETUP_KEY` | long random text, used once on the dashboard to create the first founder (Render makes one) |
 | `SUPERUSER_EMAIL`, `SUPERUSER_PASSWORD` | optional: the secret super user, see [Super user](#super-user) |
 | `REDIS_URL` | optional: Redis cache, see [Speed and the Redis cache](#speed-and-the-redis-cache) |
+| `KEEP_AWAKE` | optional: `true` keeps Render's free instance from sleeping, see [Keep it awake](#keep-it-awake) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | optional: phone alerts, see [Alerts](#alerts-live-updates-and-telegram) |
 
 Everything else has a sensible default and can be left out. Set one only if you need to change it:
 
@@ -78,7 +80,7 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
    A service made from an older version may still have `MONGO_DB`, `COMPANY_TZ`, `IP_SALT` or `CONTACT_ORIGINS`:
    they keep working, and can be deleted if they hold the default.
 3. Open `https://<your-service>.onrender.com/api/v1/health`.
-   `{"ok":true,"version":"1.7.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
+   `{"ok":true,"version":"1.8.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
    No `version` in that answer means Render still runs a copy from before pictures: deploy this version again.
 4. On each robot PC: Software update → Update settings → Report server address
    `https://<your-service>.onrender.com`. In the mobile app: the same address.
@@ -88,10 +90,8 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
 **What is slow, in order:**
 
 1. **Render's free plan sleeps** after 15 minutes without requests. The next visit waits 30 to 60
-   seconds while it starts again. No cache can help with that: the server is not running. Fixes: a paid
-   instance (Starter) never sleeps; or a free uptime monitor (for example UptimeRobot) that opens
-   `https://<your-service>.onrender.com/api/v1/health` every 10 minutes keeps it awake (one service
-   running all month fits within the free hours).
+   seconds while it starts again. No cache can help with that: the server is not running. See
+   [Keep it awake](#keep-it-awake).
 2. **Distance.** Every request goes from your computer to Render, and from Render to Atlas. Put the
    Render service, the Atlas cluster and the Redis instance in the **same region** (for India:
    Singapore on both). An Atlas cluster in another region than Render adds its distance to every database read.
@@ -115,6 +115,53 @@ using it again when it is back. `/api/v1/health` shows `"cache"`: `redis connect
 **On Render:** New → Key Value (the free plan is enough), **in the same region as the hub**. Copy its
 **Internal Key Value URL** (`redis://red-…:6379`) and add it to the hub's Environment as `REDIS_URL`.
 The internal address only works from Render, not from your computer.
+
+## Keep it awake
+
+Render's free plan stops the hub after 15 minutes without visitors; the next visit waits up to a minute.
+
+**Built in (one setting):** add `KEEP_AWAKE` = `true` in Render → Environment. The hub then opens its own
+address (`RENDER_EXTERNAL_URL`, which Render sets) every 10 minutes, so it never goes 15 minutes without a
+visit. The log says `[HUB] keep-awake: …` at start. Off a Render host, set `KEEP_AWAKE` to the hub's full `https://` address.
+
+**Also recommended, an outside monitor (free, 3 minutes):** it wakes the hub if it ever did stop (for
+example after Render restarts it at a quiet moment) and emails you when the hub is down.
+
+1. Sign up at uptimerobot.com (free plan).
+2. **New monitor** → type **HTTP(s)**, name `Nextup hub`, URL `https://<your-service>.onrender.com/api/v1/health`,
+   interval **5 minutes** (the free plan's shortest; 10 also works).
+3. Under alert contacts tick your email. Save.
+
+Free hours: Render gives 750 free instance hours a month per workspace. One service running all month uses
+about 744, so this fits only if the hub is your only free web service kept awake.
+
+## Alerts, live updates and Telegram
+
+**Live updates.** The dashboard keeps a connection open to `GET /api/v1/stream` (server-sent events).
+Every change made by anyone (a project, a leave request, a robot stage…) tells the open dashboards to
+reload the page on screen, so nobody has to press reload. The event carries no data: the dashboard reloads
+through the normal API, so every role check applies. A dot next to the logo is green while it is connected;
+it reconnects by itself when Render restarts or wakes the hub. One server instance is assumed (Render's free plan).
+
+**Alerts in the dashboard.** A new website enquiry (founders and leads, who may see enquiries) or bug report
+(everyone who may see bug reports) shows a pop-up that opens it. Desktop notifications can be turned on in
+**Settings → Alerts** (browsers allow them on `http://localhost`, not on a network address).
+
+**Telegram, to your phone, also when the dashboard is closed:**
+
+1. In Telegram open **@BotFather**, send `/newbot`, give it a name (e.g. *Nextup hub*) and a username ending in
+   `bot`. It answers with a token like `7412345678:AAH…`.
+2. Render → the hub → Environment: add `TELEGRAM_BOT_TOKEN` = that token. Save and wait for the redeploy.
+3. In Telegram, open your new bot and press **Start**.
+4. Dashboard → **Settings → Alerts → Find my chat id**. It shows a number (your chat). Add it on Render as
+   `TELEGRAM_CHAT_ID` and save. For several people, each presses Start, and you list their numbers
+   separated by commas; for a team group, add the bot to the group, send a message there, and use the group's
+   (negative) number.
+5. **Send a test** in the same place.
+
+Telegram messages include the customer's name, company, phone, email and message (for enquiries), so add
+only chats of people who may see enquiries. If Telegram is unreachable the hub carries on; the log says
+`[notify] Telegram …`.
 
 ## If it does not work
 

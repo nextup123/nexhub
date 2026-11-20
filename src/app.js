@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
 const { createCache } = require('./cache');
+const { createLive, createNotifier } = require('./notify');
 const M = require('./models');
 const defaultConfig = require('./config');
 const { createContactRoutes } = require('./contact');
@@ -12,7 +13,7 @@ const { createAuth } = require('./auth');
 const { createHr } = require('./hr');
 const { createProduction } = require('./production');
 const { createProjects } = require('./projects');
-const { can, ROLES, ROLE_LABELS } = require('./permissions');
+const { can, isTop, ROLES, ROLE_LABELS } = require('./permissions');
 
 const toInt = (v, fallback, max) => {
   const n = Number(v);
@@ -29,11 +30,15 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const PUBLIC_BUG_FIELDS = { _id: 0, number: 1, title: 1, status: 1, fixedInVersion: 1, clientReportId: 1, createdAt: 1, updatedAt: 1 };
 
 // Answers that are never cached: time-sensitive, not JSON, or already cheap.
-const NO_CACHE = [/^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/attachments\//];
+const NO_CACHE = [/^\/stream$/, /^\/notifications\//, /^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/attachments\//];
 // Bug reports, releases and machines: the robots write these often, so they have their own generation.
 const ROBOT_AREA = /^\/(apps|bugs|attachments)(\/|$)/;
 
-function createApp({ db, config = defaultConfig, cache = createCache() }) {
+// Changes that do not tell the open dashboards to reload: sign-ins, and the robots' heartbeats.
+const QUIET = [/^\/auth\/(login|logout)$/, /^\/apps\/[^/]+\/machines\/heartbeat$/];
+
+function createApp({ db, config = defaultConfig, cache = createCache(), live = createLive(), notifier = null }) {
+  notifier = notifier || createNotifier({ config, live });
   const apps = db.collection('apps');
   const releases = db.collection('releases');
   const bugs = db.collection('bug_reports');
@@ -46,7 +51,8 @@ function createApp({ db, config = defaultConfig, cache = createCache() }) {
   // Behind Render's proxy: read the visitor's address from X-Forwarded-For (rate limits need it).
   app.set('trust proxy', config.TRUST_PROXY);
   app.use(cors({ exposedHeaders: ['Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Content-Disposition'], maxAge: 86400 }));
-  app.use(compression());
+  // Not the live stream: it must reach the dashboard as each event is written.
+  app.use(compression({ filter: (req, res) => !/\/stream$/.test(req.path) && compression.filter(req, res) }));
   app.use(express.json({ limit: '2mb' }));
 
   const api = express.Router();
@@ -55,8 +61,11 @@ function createApp({ db, config = defaultConfig, cache = createCache() }) {
   // Any change moves the cache generation on before its answer goes out (see src/cache.js), so the
   // dashboard's next read after a save never gets an older cached answer.
   api.use((req, res, next) => {
-    if (!cache.enabled || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     const name = ROBOT_AREA.test(req.path) ? 'robot' : 'main';
+    // Tell the open dashboards something changed (they reload through the API, with their own permissions).
+    if (!QUIET.some((rx) => rx.test(req.path))) res.on('finish', () => { if (res.statusCode < 400) live.emit('change', { area: name }); });
+    if (!cache.enabled) return next();
     const end = res.end;
     let once = false;
     res.end = function endAfterBump(...args) {
@@ -228,6 +237,7 @@ function createApp({ db, config = defaultConfig, cache = createCache() }) {
       }
       throw err;
     }
+    notifier.bug(doc, req.appDoc.name);
     res.status(201).json({ bug: Object.fromEntries(Object.keys(PUBLIC_BUG_FIELDS).filter((k) => k !== '_id').map((k) => [k, doc[k]])) });
   }));
 
@@ -421,7 +431,55 @@ function createApp({ db, config = defaultConfig, cache = createCache() }) {
   api.use(production.router);
   const projectsApi = createProjects({ db, config, requireUser: auth.requireUser });
   api.use(projectsApi.router);
-  api.use(createContactRoutes({ db, config, requireUser: auth.requireUser }));
+  api.use(createContactRoutes({ db, config, requireUser: auth.requireUser, notifier }));
+
+  // ── Live updates for the dashboard ──────────────────────────
+  // Server-sent events. The dashboard reads it with fetch (so the token stays in the Authorization
+  // header, never in an address). `change`: reload what is on screen. `notify`: a new enquiry or bug
+  // report, only to people whose role may see it, checked again against the session at that moment.
+  api.get('/stream', auth.requireUser(), (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive' });
+    res.flushHeaders?.();
+    const sid = req.sessionId;
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    res.write('retry: 5000\n\n');
+    send('hello', { at: new Date().toISOString() });
+    let closed = false;
+    const close = () => { if (!closed) { closed = true; cleanup(); res.end(); } };
+    const onChange = (c) => send('change', { area: c.area });
+    const onNotify = async (n) => {
+      try {
+        const u = await auth.userForSession(sid);
+        if (!u) return close();
+        if (can(u, n.perm)) send('notify', { kind: n.kind, id: n.id, ref: n.ref, title: n.title, body: n.lines.filter(Boolean).join('\n') });
+      } catch { /* the next ping tries again */ }
+    };
+    let beats = 0;
+    // A comment every 25 s keeps proxies from closing a quiet connection; every 4th also checks the session.
+    const timer = setInterval(async () => {
+      res.write(': ping\n\n');
+      if (++beats % 4 === 0) { try { if (!(await auth.userForSession(sid))) close(); } catch { /* keep going */ } }
+    }, 25000);
+    function cleanup() { clearInterval(timer); live.off('change', onChange); live.off('notify', onNotify); }
+    live.on('change', onChange);
+    live.on('notify', onNotify);
+    req.on('close', () => { closed = true; cleanup(); });
+  });
+
+  // ── Telegram alerts (founders and the super user) ───────────
+  const topOnly = (req, res, next) => (isTop(req.user) ? next() : res.status(403).json({ error: 'Only a founder can do this' }));
+  api.get('/notifications/telegram', auth.requireUser(), topOnly, (req, res) => res.json(notifier.telegramStatus()));
+  api.get('/notifications/telegram/chats', auth.requireUser(), topOnly, wrap(async (req, res) => {
+    try { res.json({ chats: await notifier.recentChats() }); }
+    catch (err) { res.status(502).json({ error: `Telegram: ${err.message}` }); }
+  }));
+  api.post('/notifications/telegram/test', auth.requireUser(), topOnly, wrap(async (req, res) => {
+    const status = notifier.telegramStatus();
+    if (!status.configured) return res.status(400).json({ error: 'Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID on the server first' });
+    const sent = await notifier.toTelegram(`<b>Nextup hub</b>\nTest alert from ${req.user.name.replace(/[<>&]/g, '')}. New website enquiries and bug reports will arrive here.`);
+    if (!sent) return res.status(502).json({ error: 'Telegram did not accept the message. Check the bot token and chat id, and that you pressed Start in the bot.' });
+    res.json({ ok: true, sent });
+  }));
 
   // One call for the dashboard's home page and menu badges: only what this person may see.
   api.get('/home', auth.requireUser(), wrap(async (req, res) => {
@@ -479,6 +537,7 @@ function createApp({ db, config = defaultConfig, cache = createCache() }) {
   // Run once at start: creates, updates or switches off the hidden super user (see auth.js).
   app.locals.ensureSuperuser = auth.ensureSuperuser;
   app.locals.cache = cache;
+  app.locals.live = live;
   return app;
 }
 

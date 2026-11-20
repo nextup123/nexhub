@@ -12,7 +12,7 @@ const { createCache } = require('./cache');
 // The API itself answers 503 until MongoDB is connected; connecting is retried.
 // What this server can do, so the tool and the app can tell an older server apart.
 const VERSION = require('../package.json').version;
-const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects', 'cache'];
+const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects', 'cache', 'live', 'alerts'];
 const cache = createCache({ url: config.REDIS_URL, ttl: config.CACHE_TTL });
 if (!config.REDIS_URL) console.log('[HUB] REDIS_URL is not set: no cache, MongoDB answers every request.');
 const state = { db: 'connecting', error: '', since: new Date().toISOString(), attempts: 0 };
@@ -85,6 +85,18 @@ async function start() {
   }
 }
 start();
+
+// Keep Render's free instance awake: a visit to its own public address every 10 minutes counts as
+// traffic. (While it is asleep nothing runs, so this only works from the moment it is up; it then
+// stays up. An outside monitor such as UptimeRobot also wakes it and tells you when it is down.)
+if (config.KEEP_AWAKE_URL) {
+  const ping = () => fetch(`${config.KEEP_AWAKE_URL}/api/v1/health`, { signal: AbortSignal.timeout(30000) })
+    .catch((err) => console.warn(`[HUB] keep-awake ping failed: ${err.message}`));
+  setInterval(ping, 10 * 60 * 1000).unref();
+  console.log(`[HUB] keep-awake: opening ${config.KEEP_AWAKE_URL}/api/v1/health every 10 minutes`);
+} else if (process.env.KEEP_AWAKE) {
+  console.warn('[HUB] KEEP_AWAKE is set but there is no address to ping: set KEEP_AWAKE to the full https:// address of the hub.');
+}
 
 const stop = async () => { server.close(); await cache.close(); if (client) await client.close().catch(() => {}); process.exit(0); };
 process.on('SIGINT', stop);

@@ -5,6 +5,7 @@ const { createFakeDb } = require('./fakeDb');
 const { setup } = require('../src/db');
 const { createApp } = require('../src/app');
 const baseConfig = require('../src/config');
+const crypto = require('crypto');
 const { createCache, memoryStore } = require('../src/cache');
 
 const SETUP_KEY = 'test-setup-key';
@@ -14,7 +15,8 @@ const servers = [];
 const quiet = { log() {}, warn() {} };
 const redisCaches = [];
 async function readyRedis(url) {
-  const c = createCache({ url, ttl: 60, log: quiet });
+  // Each test hub gets its own keys: the test files run at the same time against one Redis.
+  const c = createCache({ url, ttl: 60, log: quiet, prefix: `test:${crypto.randomUUID()}:` });
   redisCaches.push(c);
   for (let i = 0; i < 50 && !/ connected$/.test(c.status()); i++) await new Promise((r) => setTimeout(r, 50));
   return c;
@@ -73,7 +75,7 @@ async function startHub(overrides = {}) {
     return { token: again.body.token, user: again.body.user };
   }
 
-  return { call, founder, person, db, config, app };
+  return { call, founder, person, db, config, app, base };
 }
 
 const stopAll = async () => { servers.forEach((s) => s.close()); await Promise.all(redisCaches.map((c) => c.close())); };

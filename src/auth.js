@@ -344,7 +344,15 @@ function createAuth({ db, config, cache = null }) {
     res.json({ temporaryPassword: temp });
   }));
 
-  return { router, loadUser, requireUser, publicUser, ensureSuperuser };
+  /** The person behind a session right now, or null (signed out, expired, switched off). */
+  async function userForSession(id) {
+    const s = await sessions.findOne({ _id: id });
+    if (!s || new Date(s.expiresAt) <= new Date()) return null;
+    const u = await users.findOne({ _id: s.userId });
+    return u && u.active !== false ? u : null;
+  }
+
+  return { router, loadUser, requireUser, publicUser, ensureSuperuser, userForSession };
 }
 
 module.exports = { createAuth, hashPassword, verifyPassword, publicUser };

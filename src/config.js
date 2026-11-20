@@ -19,6 +19,16 @@ module.exports = {
   REDIS_URL: (process.env.REDIS_URL || '').trim(),
   // How long a cached dashboard answer may live, in seconds. Changes clear it at once anyway.
   CACHE_TTL: num(process.env.CACHE_TTL, 60),
+  // Optional phone alerts for new website enquiries and bug reports (see README → Alerts).
+  TELEGRAM_BOT_TOKEN: (process.env.TELEGRAM_BOT_TOKEN || '').trim(),
+  TELEGRAM_CHAT_ID: (process.env.TELEGRAM_CHAT_ID || '').trim(),
+  // Render's free plan sleeps after 15 minutes without visitors. true: the hub opens its own public
+  // address every 10 minutes so it never does. Render sets RENDER_EXTERNAL_URL; elsewhere give the URL.
+  KEEP_AWAKE_URL: (() => {
+    const v = (process.env.KEEP_AWAKE || '').trim();
+    if (/^https?:\/\//i.test(v)) return v.replace(/\/$/, '');
+    return /^(1|true|yes|on)$/i.test(v) ? (process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '') : '';
+  })(),
 
   // ── Company dashboard: accounts ──
   // Used once, to create the first founder account on the dashboard's setup screen.

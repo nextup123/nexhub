@@ -41,7 +41,7 @@ const who = (req) => (req.user && req.user.name) || 'admin';
 /** List views leave out the long and internal fields. */
 const LIST_PROJECTION = { notes: 0, statusHistory: 0, ipHash: 0, messageHash: 0, userAgent: 0 };
 
-function createContactRoutes({ db, config, requireUser }) {
+function createContactRoutes({ db, config, requireUser, notifier = null }) {
   const canView = requireUser('enquiries.view');
   const canEdit = requireUser('enquiries.edit');
   const canDelete = requireUser('enquiries.delete');
@@ -114,6 +114,7 @@ function createContactRoutes({ db, config, requireUser }) {
     };
     await submissions.insertOne(doc);
     res.status(201).json({ ok: true, ref });
+    if (notifier) notifier.enquiry(doc);
   }));
 
   // ── Admin: list, search, export ─────────────────────────────
