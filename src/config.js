@@ -15,6 +15,10 @@ module.exports = {
   MONGO_URL: (process.env.MONGO_URL || process.env.MONGODB_URI || '').trim(),
   MONGO_DB: process.env.MONGO_DB || 'nextup_support',
   envFileFound,
+  // Optional Redis cache (Render Key Value: its Internal URL). Empty = no cache, MongoDB answers everything.
+  REDIS_URL: (process.env.REDIS_URL || '').trim(),
+  // How long a cached dashboard answer may live, in seconds. Changes clear it at once anyway.
+  CACHE_TTL: num(process.env.CACHE_TTL, 60),
 
   // ── Company dashboard: accounts ──
   // Used once, to create the first founder account on the dashboard's setup screen.

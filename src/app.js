@@ -3,6 +3,8 @@
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
+const { createCache } = require('./cache');
 const M = require('./models');
 const defaultConfig = require('./config');
 const { createContactRoutes } = require('./contact');
@@ -26,7 +28,12 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 /** What a machine (vendor) may see about its own reports. */
 const PUBLIC_BUG_FIELDS = { _id: 0, number: 1, title: 1, status: 1, fixedInVersion: 1, clientReportId: 1, createdAt: 1, updatedAt: 1 };
 
-function createApp({ db, config = defaultConfig }) {
+// Answers that are never cached: time-sensitive, not JSON, or already cheap.
+const NO_CACHE = [/^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/attachments\//];
+// Bug reports, releases and machines: the robots write these often, so they have their own generation.
+const ROBOT_AREA = /^\/(apps|bugs|attachments)(\/|$)/;
+
+function createApp({ db, config = defaultConfig, cache = createCache() }) {
   const apps = db.collection('apps');
   const releases = db.collection('releases');
   const bugs = db.collection('bug_reports');
@@ -39,11 +46,53 @@ function createApp({ db, config = defaultConfig }) {
   // Behind Render's proxy: read the visitor's address from X-Forwarded-For (rate limits need it).
   app.set('trust proxy', config.TRUST_PROXY);
   app.use(cors({ exposedHeaders: ['Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Content-Disposition'], maxAge: 86400 }));
+  app.use(compression());
   app.use(express.json({ limit: '2mb' }));
 
   const api = express.Router();
-  const auth = createAuth({ db, config });
+  const auth = createAuth({ db, config, cache });
+
+  // Any change moves the cache generation on before its answer goes out (see src/cache.js), so the
+  // dashboard's next read after a save never gets an older cached answer.
+  api.use((req, res, next) => {
+    if (!cache.enabled || ['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    const name = ROBOT_AREA.test(req.path) ? 'robot' : 'main';
+    const end = res.end;
+    let once = false;
+    res.end = function endAfterBump(...args) {
+      if (once) return end.apply(res, args);
+      once = true;
+      cache.bump(name).finally(() => end.apply(res, args));
+      return res;
+    };
+    next();
+  });
+
   api.use(auth.loadUser);
+
+  // Cached GET answers: per person (after their own permission checks once passed) and per address.
+  api.use(wrap(async (req, res, next) => {
+    if (req.method !== 'GET' || !cache.enabled || NO_CACHE.some((rx) => rx.test(req.path))) return next();
+    const gens = req.cacheGens !== undefined ? req.cacheGens : await cache.generations();
+    if (!gens) return next();
+    const robot = ROBOT_AREA.test(req.path) || req.path === '/home' ? gens.robot : '-';
+    const key = `r:${gens.main}:${robot}:${req.user ? req.user._id : 'anon'}:${crypto.createHash('sha256').update(req.originalUrl).digest('hex')}`;
+    const hit = await cache.get(key);
+    if (hit) {
+      res.set('Cache-Control', 'no-store');
+      res.set('X-Cache', 'hit');
+      return res.type('json').send(hit);
+    }
+    res.set('X-Cache', 'miss');
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode !== 200) return json(body);
+      const text = JSON.stringify(body);
+      cache.set(key, text, cache.ttl);
+      return res.type('json').send(text);
+    };
+    next();
+  }));
 
   /**
    * Maintainer routes (bugs, releases, machines). Someone signed in must have the permission.
@@ -429,6 +478,7 @@ function createApp({ db, config = defaultConfig }) {
   });
   // Run once at start: creates, updates or switches off the hidden super user (see auth.js).
   app.locals.ensureSuperuser = auth.ensureSuperuser;
+  app.locals.cache = cache;
   return app;
 }
 

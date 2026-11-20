@@ -5,10 +5,20 @@ const { createFakeDb } = require('./fakeDb');
 const { setup } = require('../src/db');
 const { createApp } = require('../src/app');
 const baseConfig = require('../src/config');
+const { createCache, memoryStore } = require('../src/cache');
 
 const SETUP_KEY = 'test-setup-key';
 const PASSWORD = 'correct-horse-9';
 const servers = [];
+
+const quiet = { log() {}, warn() {} };
+const redisCaches = [];
+async function readyRedis(url) {
+  const c = createCache({ url, ttl: 60, log: quiet });
+  redisCaches.push(c);
+  for (let i = 0; i < 50 && !/ connected$/.test(c.status()); i++) await new Promise((r) => setTimeout(r, 50));
+  return c;
+}
 
 async function startHub(overrides = {}) {
   const db = createFakeDb();
@@ -17,7 +27,13 @@ async function startHub(overrides = {}) {
     ...baseConfig, SETUP_KEY, ADMIN_KEY: '', CONTACT_ORIGINS: [], CONTACT_BURST: 3, CONTACT_DAILY: 10, CONTACT_PER_EMAIL_DAILY: 5,
     TRUST_PROXY: true, LOCK_BUG_ROUTES: false, RELEASE_TOKEN: '', ...overrides,
   };
-  const app = createApp({ db, config });
+  // Every test runs with the cache on (an in-memory stand-in for Redis), so a stale cached answer
+  // would fail it. TEST_CACHE=off runs them without.
+  const cache = overrides.cache || (process.env.TEST_CACHE === 'off' ? createCache()
+    : process.env.TEST_REDIS_URL ? await readyRedis(process.env.TEST_REDIS_URL)
+      : createCache({ store: memoryStore(), ttl: 60 }));
+  delete config.cache;
+  const app = createApp({ db, config, cache });
   await app.locals.ensureSuperuser({ log() {}, warn() {} });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   servers.push(server);
@@ -60,6 +76,6 @@ async function startHub(overrides = {}) {
   return { call, founder, person, db, config, app };
 }
 
-const stopAll = () => servers.forEach((s) => s.close());
+const stopAll = async () => { servers.forEach((s) => s.close()); await Promise.all(redisCaches.map((c) => c.close())); };
 
 module.exports = { startHub, stopAll, SETUP_KEY, PASSWORD };

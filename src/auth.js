@@ -108,7 +108,15 @@ function normaliseUser(b, { partial = false } = {}) {
   return { value: out };
 }
 
-function createAuth({ db, config }) {
+// A signed-in person kept in the cache: everything but the password hash.
+const SESSION_CACHE_SEC = 300;
+const toCache = (u) => { const { passwordHash, ...rest } = u; return rest; };
+const fromCache = (u) => {
+  for (const k of ['createdAt', 'updatedAt', 'lastLoginAt']) if (u[k]) u[k] = new Date(u[k]);
+  return u;
+};
+
+function createAuth({ db, config, cache = null }) {
   const users = db.collection('users');
   const sessions = db.collection('sessions');
   const router = express.Router();
@@ -120,10 +128,25 @@ function createAuth({ db, config }) {
     try {
       const token = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
       if (token && token.length >= 20) {
-        const s = await sessions.findOne({ _id: sha256hex(token) });
-        if (s && new Date(s.expiresAt) > new Date()) {
-          const u = await users.findOne({ _id: s.userId });
-          if (u && u.active !== false) { req.user = u; req.sessionId = s._id; }
+        const id = sha256hex(token);
+        // With the cache: the session and its person come from Redis. Its key holds the current
+        // generation, so any change (sign-out, role, switched off, password) makes MongoDB answer again.
+        const gens = cache && cache.enabled ? await cache.generations() : null;
+        req.cacheGens = gens;
+        const key = gens && `sess:${gens.main}:${id}`;
+        const hit = key && await cache.get(key);
+        const c = hit ? JSON.parse(hit) : null;
+        if (c && new Date(c.expiresAt) > new Date()) {
+          req.user = fromCache(c.user); req.sessionId = id;
+        } else {
+          const s = await sessions.findOne({ _id: id });
+          if (s && new Date(s.expiresAt) > new Date()) {
+            const u = await users.findOne({ _id: s.userId });
+            if (u && u.active !== false) {
+              req.user = u; req.sessionId = s._id;
+              if (key) await cache.set(key, JSON.stringify({ expiresAt: s.expiresAt, user: toCache(u) }), Math.min(SESSION_CACHE_SEC, (new Date(s.expiresAt) - Date.now()) / 1000));
+            }
+          }
         }
       }
       next();
@@ -156,6 +179,10 @@ function createAuth({ db, config }) {
 
   /** Creates, updates or switches off the hidden super user from the environment. Safe to run on every start. */
   async function ensureSuperuser(log = console) {
+    try { return await syncSuperuser(log); }
+    finally { if (cache) await cache.bump('main'); } // the change must not be hidden by cached answers
+  }
+  async function syncSuperuser(log) {
     const email = config.SUPERUSER_EMAIL;
     const password = config.SUPERUSER_PASSWORD;
     const existing = await users.find({ hidden: true }).toArray();
@@ -250,7 +277,8 @@ function createAuth({ db, config }) {
 
   router.post('/auth/password', requireUser(), wrap(async (req, res) => {
     if (req.user.hidden) return res.status(400).json({ error: 'This password is set by SUPERUSER_PASSWORD on the server. Change it there.' });
-    if (!verifyPassword(String(req.body?.current || ''), req.user.passwordHash)) return res.status(400).json({ error: 'Your current password is not right' });
+    const stored = await users.findOne({ _id: req.user._id }, { projection: { passwordHash: 1 } });
+    if (!verifyPassword(String(req.body?.current || ''), stored && stored.passwordHash)) return res.status(400).json({ error: 'Your current password is not right' });
     const pw = passwordProblem(req.body.password);
     if (pw) return res.status(400).json({ error: pw });
     await users.updateOne({ _id: req.user._id }, { $set: { passwordHash: hashPassword(req.body.password), mustChangePassword: false, updatedAt: new Date() } });

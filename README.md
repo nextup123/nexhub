@@ -38,6 +38,7 @@ Only two are required:
 | `MONGO_URL` | the MongoDB / Atlas connection string |
 | `SETUP_KEY` | long random text, used once on the dashboard to create the first founder (Render makes one) |
 | `SUPERUSER_EMAIL`, `SUPERUSER_PASSWORD` | optional: the secret super user, see [Super user](#super-user) |
+| `REDIS_URL` | optional: Redis cache, see [Speed and the Redis cache](#speed-and-the-redis-cache) |
 
 Everything else has a sensible default and can be left out. Set one only if you need to change it:
 
@@ -55,6 +56,7 @@ Everything else has a sensible default and can be left out. Set one only if you 
 | `TRUST_PROXY` | `1` | proxies in front of the server (right for Render) |
 | `IP_SALT` | the setup key | salt for stored visitor-address hashes |
 | `LOCK_BUG_ROUTES`, `RELEASE_TOKEN` | off | see [The apps and robots keep working](#the-apps-and-robots-keep-working) |
+| `CACHE_TTL` | `60` | seconds a cached dashboard answer may live (changes clear it at once anyway) |
 | `PORT` | `4060` (Render sets its own) | |
 
 It needs a MongoDB 6 or 7 server (or MongoDB Atlas). On first start it creates the collections
@@ -76,10 +78,43 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
    A service made from an older version may still have `MONGO_DB`, `COMPANY_TZ`, `IP_SALT` or `CONTACT_ORIGINS`:
    they keep working, and can be deleted if they hold the default.
 3. Open `https://<your-service>.onrender.com/api/v1/health`.
-   `{"ok":true,"version":"1.6.0","features":["pictures","contact","accounts","hr","production","projects"],"db":"connected"}` means it works.
+   `{"ok":true,"version":"1.7.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
    No `version` in that answer means Render still runs a copy from before pictures: deploy this version again.
 4. On each robot PC: Software update → Update settings → Report server address
    `https://<your-service>.onrender.com`. In the mobile app: the same address.
+
+## Speed and the Redis cache
+
+**What is slow, in order:**
+
+1. **Render's free plan sleeps** after 15 minutes without requests. The next visit waits 30 to 60
+   seconds while it starts again. No cache can help with that: the server is not running. Fixes: a paid
+   instance (Starter) never sleeps; or a free uptime monitor (for example UptimeRobot) that opens
+   `https://<your-service>.onrender.com/api/v1/health` every 10 minutes keeps it awake (one service
+   running all month fits within the free hours).
+2. **Distance.** Every request goes from your computer to Render, and from Render to Atlas. Put the
+   Render service, the Atlas cluster and the Redis instance in the **same region** (for India:
+   Singapore on both). An Atlas cluster in another region than Render adds its distance to every database read.
+3. **Database reads**, which the cache below removes for repeat visits.
+
+**Redis cache (optional).** With `REDIS_URL` set, the hub keeps in Redis:
+
+- each sign-in (the session and the person), so a request no longer needs two database reads before it starts;
+- the dashboard's answers (home, projects, people, calendar, production, enquiries, bugs…) for `CACHE_TTL`
+  seconds, per person, so going back to a page you just saw does not ask the database again.
+
+It never shows old data: every save (any change, by anyone) moves the cache on before its answer is
+sent, so the next read is fresh. The robots' heartbeats and bug reports only refresh the bug pages and
+home, not people and projects. Answers are kept per person after their own permission checks, so roles,
+switched-off accounts, sign-outs and the super user behave exactly as without it. The attendance "today"
+screen, CSV exports and pictures are never cached. Answers are also gzip-compressed now, which helps on slow connections.
+
+If Redis is unreachable the hub carries on from MongoDB (the log says `[cache] Redis: …`) and starts
+using it again when it is back. `/api/v1/health` shows `"cache"`: `redis connected`, `redis not connected: …` or `off`.
+
+**On Render:** New → Key Value (the free plan is enough), **in the same region as the hub**. Copy its
+**Internal Key Value URL** (`redis://red-…:6379`) and add it to the hub's Environment as `REDIS_URL`.
+The internal address only works from Render, not from your computer.
 
 ## If it does not work
 
@@ -107,7 +142,7 @@ PORT=4060 node test/serve-fake.js
 ```
 
 runs it on an in-memory stand-in (data is lost when it stops). `npm test` runs the API tests on
-the same stand-in. Add `SEED=1` for a sample company: 12 people, 5 projects with site visits and solved problems, robots in the build, attendance,
+the same stand-in, with the cache on (`TEST_CACHE=off` without it, `TEST_REDIS_URL=redis://127.0.0.1:6379` against a real Redis). Add `SEED=1` for a sample company: 12 people, 5 projects with site visits and solved problems, robots in the build, attendance,
 leave, holidays, events, bug reports and 24 website enquiries. Everyone's password is `nextup-demo`:
 
 | Sign in as | Role |

@@ -5,13 +5,16 @@ const cors = require('cors');
 const config = require('./config');
 const { connect, setup } = require('./db');
 const { createApp } = require('./app');
+const { createCache } = require('./cache');
 
 // The web server starts straight away, so Render's health check passes and
 // /api/v1/health can say what is wrong while the database is not reachable.
 // The API itself answers 503 until MongoDB is connected; connecting is retried.
 // What this server can do, so the tool and the app can tell an older server apart.
 const VERSION = require('../package.json').version;
-const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects'];
+const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects', 'cache'];
+const cache = createCache({ url: config.REDIS_URL, ttl: config.CACHE_TTL });
+if (!config.REDIS_URL) console.log('[HUB] REDIS_URL is not set: no cache, MongoDB answers every request.');
 const state = { db: 'connecting', error: '', since: new Date().toISOString(), attempts: 0 };
 let api = null;
 let client = null;
@@ -25,7 +28,7 @@ outer.use(cors({ exposedHeaders: ['Retry-After', 'RateLimit-Limit', 'RateLimit-R
 if (!config.SETUP_KEY && !config.ADMIN_KEY) console.warn('[HUB] SETUP_KEY is not set: the first founder account cannot be created until it is.');
 outer.get(['/', '/api/v1/health'], (req, res) => {
   // Always 200 so Render keeps the service up and the page can show what is wrong.
-  res.json({ ok: !!api, version: VERSION, features: FEATURES, db: state.db, error: state.error || undefined, attempts: state.attempts, dbName: config.MONGO_DB, time: new Date().toISOString() });
+  res.json({ ok: !!api, version: VERSION, features: FEATURES, db: state.db, cache: cache.status(), error: state.error || undefined, attempts: state.attempts, dbName: config.MONGO_DB, time: new Date().toISOString() });
 });
 outer.use((req, res, next) => {
   if (api) return api(req, res, next);
@@ -64,7 +67,7 @@ async function start() {
       client = c.client;
       const problems = await setup(c.db);
       problems.forEach((p) => console.warn(`[HUB] setup: ${p}`));
-      const next = createApp({ db: c.db });
+      const next = createApp({ db: c.db, cache });
       await next.locals.ensureSuperuser().catch((e) => console.error(`[HUB] super user: ${e.message}`));
       api = next;
       state.db = 'connected';
@@ -83,6 +86,6 @@ async function start() {
 }
 start();
 
-const stop = async () => { server.close(); if (client) await client.close().catch(() => {}); process.exit(0); };
+const stop = async () => { server.close(); await cache.close(); if (client) await client.close().catch(() => {}); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
