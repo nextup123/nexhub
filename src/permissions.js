@@ -47,6 +47,12 @@ const PERMISSIONS = {
   'projects.manage': ['founder', 'lead'],             // create, edit, team, robots, status
   'projects.log': ['founder', 'lead', 'employee'],    // log problems, solutions, site visits, notes
   'projects.delete': ['founder'],
+  // clients: the companies the projects are for (company contacts like the site contact: managers and their project teams)
+  'clients.view': ['founder', 'lead', 'employee'],
+  'clients.manage': ['founder', 'lead'],
+  'clients.delete': ['founder'],
+  // bulk import from spreadsheets (people, clients, projects, robots, equipment, past problems): the super user only
+  'data.import': [],
   // website enquiries (customer contact details)
   'enquiries.view': ['founder', 'lead'],
   'enquiries.edit': ['founder', 'lead'],

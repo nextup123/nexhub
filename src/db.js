@@ -19,6 +19,7 @@ const M = require('./models');
  *   holidays, events     the company calendar
  *   production_units     every robot being built, with its build stages
  *   projects             customer installations: robots, team, details
+ *   clients              the companies projects are for, with their contacts
  *   project_entries      a project's record: problems and solutions, site visits, notes
  */
 
@@ -119,6 +120,7 @@ const VALIDATORS = {
     required: ['_id', 'ref', 'name', 'status'],
     properties: { status: { enum: ['planning', 'in_progress', 'commissioning', 'live', 'on_hold', 'closed'] }, team: { bsonType: 'array' } },
   },
+  clients: { bsonType: 'object', required: ['_id', 'ref', 'name', 'nameKey'], properties: { contacts: { bsonType: 'array' } } },
   project_entries: {
     bsonType: 'object',
     required: ['_id', 'projectId', 'kind'],
@@ -165,7 +167,8 @@ const INDEXES = {
   holidays: [[{ date: 1 }, { unique: true }]],
   events: [[{ date: 1 }, {}]],
   production_units: [[{ serial: 1 }, { unique: true }], [{ createdAt: -1 }, {}], [{ projectId: 1 }, {}]],
-  projects: [[{ ref: 1 }, { unique: true }], [{ status: 1, updatedAt: -1 }, {}]],
+  projects: [[{ ref: 1 }, { unique: true }], [{ status: 1, updatedAt: -1 }, {}], [{ clientId: 1 }, {}]],
+  clients: [[{ ref: 1 }, { unique: true }], [{ nameKey: 1 }, { unique: true }]],
   project_entries: [[{ projectId: 1, createdAt: -1 }, {}], [{ kind: 1, status: 1 }, {}], [{ kind: 1, date: 1 }, {}]],
 };
 

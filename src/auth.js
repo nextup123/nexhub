@@ -355,4 +355,4 @@ function createAuth({ db, config, cache = null }) {
   return { router, loadUser, requireUser, publicUser, ensureSuperuser, userForSession };
 }
 
-module.exports = { createAuth, hashPassword, verifyPassword, publicUser };
+module.exports = { createAuth, hashPassword, verifyPassword, publicUser, normaliseUser, passwordProblem };

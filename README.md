@@ -80,7 +80,7 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
    A service made from an older version may still have `MONGO_DB`, `COMPANY_TZ`, `IP_SALT` or `CONTACT_ORIGINS`:
    they keep working, and can be deleted if they hold the default.
 3. Open `https://<your-service>.onrender.com/api/v1/health`.
-   `{"ok":true,"version":"1.8.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
+   `{"ok":true,"version":"1.9.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
    No `version` in that answer means Render still runs a copy from before pictures: deploy this version again.
 4. On each robot PC: Software update → Update settings → Report server address
    `https://<your-service>.onrender.com`. In the mobile app: the same address.
@@ -189,7 +189,7 @@ PORT=4060 node test/serve-fake.js
 ```
 
 runs it on an in-memory stand-in (data is lost when it stops). `npm test` runs the API tests on
-the same stand-in, with the cache on (`TEST_CACHE=off` without it, `TEST_REDIS_URL=redis://127.0.0.1:6379` against a real Redis). Add `SEED=1` for a sample company: 12 people, 5 projects with site visits and solved problems, robots in the build, attendance,
+the same stand-in, with the cache on (`TEST_CACHE=off` without it, `TEST_REDIS_URL=redis://127.0.0.1:6379` against a real Redis). Add `SEED=1` for a sample company: 12 people, 6 projects for 5 clients with equipment, site visits and solved problems, robots in the build, attendance,
 leave, holidays, events, bug reports and 24 website enquiries. Everyone's password is `nextup-demo`:
 
 | Sign in as | Role |
@@ -247,6 +247,11 @@ on a team or given a build stage, and the dashboard cannot change, reset or swit
 | Everyone's attendance, correct it, approve anyone's leave, holidays | ✓ | ✓ | | |
 | Add calendar events | ✓ | ✓ | ✓ | |
 | Projects and their whole record (problems, solutions, site visits, notes), search | ✓ | | ✓ | ✓ |
+| Clients, their projects, robots and equipment | ✓ | | ✓ | ✓ |
+| Client contacts' phone and email | ✓ | | ✓ | the teams of its projects |
+| Add and change clients, equipment on a project | ✓ | | ✓ | |
+| Delete clients (only with no projects) | ✓ | | | |
+| Record a robot's software version | ✓ | | ✓ | ✓ (robots on a project) |
 | Customer contact at a project's site | ✓ | | ✓ | the project's team |
 | Log problems, solutions, site visits and notes | ✓ | | ✓ | ✓ (change or delete their own) |
 | Create projects, change team, robots, status | ✓ | | ✓ | |
@@ -270,13 +275,28 @@ nobody approves their own leave (except a founder), and the last founder cannot 
 The table lives in `src/permissions.js`; the server checks it on every request and the dashboard
 uses the same table to hide what you cannot use.
 
+### Clients
+
+A **client** (`CLI-1`…) is a company: industry, city, address, GSTIN, website, notes and its contact
+people. A client has any number of projects; its page shows them all, with every robot on them (and the
+software each runs), all their equipment and a search through just that client's record.
+Clients are made when a project names a new company, by hand, or by the bulk import. When 1.9 starts
+for the first time, every existing project's customer becomes a client (one per company name, however
+it was capitalised) and the project's site contact becomes one of the client's contacts. Nothing else
+changes; running it again does nothing.
+
 ### Projects
 
-A project is one customer installation (or an internal job): `PRJ-1`, `PRJ-2`… It holds
+A project is one customer installation (or an internal job) for one client: `PRJ-1`, `PRJ-2`… It holds
 
-- **robots** from the build list (a robot is on one project at a time; its page links back),
+- **robots** from the build list (a robot is on one project at a time; its page links back), or robots
+  that were installed **before the hub** (added with every build stage done, and their software version),
+- **equipment** around the robots: conveyors, SPMs (special purpose machines), grippers, vision,
+  fixtures, safety, PLC panels, positioners, AGVs. Each with make, model, serial, supplier, install
+  date and notes; problems can be logged against a piece of equipment,
 - the **team** and each person's role on it, the customer, the site address and the contact there,
-- **problems** (`PRB-1`…): what happened, which robot, type (mechanical, electrical, software,
+- **problems** (`PRB-1`…): what happened, the **error codes**, the part, which robot or equipment,
+  the **software version** it ran (taken from the robot if not typed), type (mechanical, electrical, software,
   EtherCAT, gripper, safety, process, customer side), how bad, the cause and the **solution**,
   with updates as people work on it. Status: open, investigating, workaround, solved,
 - **site visits**: the date, who went, hours, why, what was done, next steps, and the problems found
@@ -284,15 +304,35 @@ A project is one customer installation (or an internal job): `PRJ-1`, `PRJ-2`…
   so it shows in the problem list and in search. Visits show on the company calendar,
 - **notes** and a history of every change.
 
-**Search** (`GET /projects/search?q=`) looks through all of it: project names, customers, robot serials,
-problems, causes, solutions, updates, visit reports and notes. Every word has to appear; solved problems
-come first because they hold the answer. Filters: only problems, visits or notes, only problems not solved,
-one type, one project. Each document keeps a lower-case copy of its text, so search is one database query.
+A project done before the hub is just a project with status Live or Closed and its real dates.
+
+**Search** (`GET /projects/search?q=`) looks through all of it: clients, project names, robot serials and
+software versions, equipment, problems, error codes, causes, solutions, updates, visit reports and notes.
+**Error codes are understood however they are written**: `E131`, `E-131`, `e 131` and `E_131` all find
+each other, in a code field or anywhere in the text. Every word has to appear. Results are ranked: a
+matching error code counts most, then the title, then the part, equipment, serial or software, then the
+solution or cause; solved problems get a bonus because they hold the answer. Filters: only problems,
+visits, notes, projects or clients, only problems not solved, one type, one project, one client.
+
+**Seen before** (`GET /projects/search?mode=similar&q=`): while someone writes a problem, the dashboard
+asks for problems like it (any of the same codes or main words) and shows how they were solved. Each document keeps a lower-case copy of its text, so search is one database query.
 That is fine for thousands of entries; if it ever gets slow, a MongoDB Atlas Search index on
 `project_entries.searchText` is the next step.
 
 Anyone who logs a problem can change or delete it; leads and founders can change anything. Anyone who
 can see projects may write the solution of a problem, because that is the point of the record.
+
+### Bulk import (super user)
+
+**Bulk import** in the dashboard (only the super user sees it) adds people, clients, projects, robots
+(with software versions), equipment and past problems from a spreadsheet saved as CSV. Download the
+template for each kind, fill it in, upload it, press **Check every row** (nothing is saved), read what
+would happen, then **Import**. Column names can be loose ("Employee name", "Mobile", "Company") and
+dates can be `2025-03-02`, `02/03/2025` (day first) or `2 Mar 2025`. Rows already in the hub are
+skipped, or only have their empty fields filled in, so importing the same file twice changes nothing.
+People get a temporary password, shown once (download them as CSV and give each privately); they pick
+their own at first sign-in. Import in this order: people, clients, projects, robots, equipment, problems.
+Up to 3000 rows at a time. API: `GET /import/templates`, `POST /import/:kind {rows, dryRun}`.
 
 ### Production
 

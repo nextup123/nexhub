@@ -20,6 +20,7 @@ const { createFakeDb } = require('./fakeDb');
     await require('./seedProjects').seedProjects(db);
   }
   const app = createApp({ db, config: cfg });
+  await app.locals.migrate();
   await app.locals.ensureSuperuser();
   app.listen(config.PORT, '127.0.0.1', () => console.log(`[HUB] in-memory hub on ${config.PORT}, ${process.env.SEED ? 'sample company, password nextup-demo' : `setup key ${cfg.SETUP_KEY === 'dev-key' ? 'dev-key' : '(from SETUP_KEY)'}`}`));
 })();

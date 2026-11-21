@@ -1,6 +1,6 @@
 {
   "name": "nextup-hub-api",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Nextup company hub API: accounts and roles, attendance, leave, calendar, robot build stages, bug reports, release notes, update records and the website contact form (Express + MongoDB)",
   "private": true,
   "main": "src/index.js",

@@ -36,6 +36,7 @@ async function startHub(overrides = {}) {
       : createCache({ store: memoryStore(), ttl: 60 }));
   delete config.cache;
   const app = createApp({ db, config, cache });
+  await app.locals.migrate({ log() {}, warn() {} });
   await app.locals.ensureSuperuser({ log() {}, warn() {} });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   servers.push(server);

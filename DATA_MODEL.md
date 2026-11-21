@@ -236,6 +236,10 @@ optional holidays still count as working days for leave). Event: `title`, `date`
 | `stages[]` | `{key, label, area, state, assigneeId, assignee, startedAt, doneAt, doneBy, note}` | `state`: `pending` \| `in_progress` \| `done` \| `blocked` \| `skipped`; the note says why a stage is blocked |
 | `notes[]`, `history[]` | `{at, by, text}` | every change is added to `history` |
 | `projectId` | uuid \| null | the project the robot is on |
+| `software` | `{version, since}` \| null | the version on the robot now |
+| `softwareHistory[]` | `{version, on, by, note}` | every version it has run, oldest first |
+
+A robot added as built before the hub has every stage `done` with `doneBy: 'Before the hub'`.
 
 Phase (worked out, not stored): Planned (nothing started), In build, Testing (from Calibrated on),
 Ready to ship (all stages done), Dispatched, Installed.
@@ -250,11 +254,23 @@ Ready to ship (all stages done), Dispatched, Installed.
 | `customer` | `{company, city, site, contactName, contactPhone, contactEmail}` | the contact is sent only to founders, leads and the project's team |
 | `startDate`, `goLiveDate`, `closedOn` | day | |
 | `enquiryRef`, `tags[]` | string | |
+| `clientId` | uuid \| null | the client; `customer.company` is kept equal to the client's name |
 | `team[]` | `{userId, name, role}` | |
+| `equipment[]` | `{_id, kind, name, make, model, serial, supplier, status, installedOn, notes, addedBy, addedAt}` | `kind`: `conveyor` \| `spm` \| `gripper` \| `vision` \| `fixture` \| `safety` \| `plc_panel` \| `positioner` \| `agv` \| `other`; `status`: `planned` \| `installed` \| `removed` |
 | `history[]` | `{at, by, text}` | |
-| `searchText` | string | lower-case text of the project, its team and its robots' serials; never sent out |
+| `searchText` | string | lower-case text of the project, its team, equipment, its robots' serials and software versions, and every error code in a squeezed form (`e131`); never sent out |
 
 The robots are not stored here: each `production_units` document has `projectId`.
+
+### clients
+
+| Field | Type | Notes |
+|---|---|---|
+| `ref` | string | unique, `CLI-4`, from the `client` counter |
+| `name`, `nameKey` | string | `nameKey` is the lower-case name, unique, so one company is one client |
+| `industry`, `city`, `address`, `gstin`, `website`, `notes` | string | |
+| `contacts[]` | `{name, role, phone, email}` | phone and email are sent only to founders, leads and the teams of its projects |
+| `searchText` | string | never sent out |
 
 ### project_entries
 
@@ -264,7 +280,8 @@ One per problem, site visit or note, with `projectId`, `kind` (`issue` \| `visit
 
 - Problem (`issue`): `ref` (`PRB-12`, from the `project-issue` counter), `title`, `description`, `category`,
   `severity` (`low` \| `medium` \| `high` \| `critical`), `status` (`open` \| `investigating` \| `workaround` \| `solved`),
-  `rootCause`, `solution`, `unitId`, `serial`, `foundOn`, `solvedOn`, `solvedBy`, `visitId` (the visit it was found on).
+  `rootCause`, `solution`, `unitId`, `serial`, `model`, `foundOn`, `solvedOn`, `solvedBy`, `visitId` (the visit it was found on),
+  `errorCodes[]` (as typed, upper case), `component`, `softwareVersion`, `equipmentId`, `equipmentName`, `equipmentKind`.
 - Site visit (`visit`): `date`, `endDate`, `engineers[]` (`{userId, name}`), `hours`, `purpose`, `workDone`,
   `nextSteps`, `problemIds[]` (the problems logged with it).
 - Note (`note`): `title`, `text`.
@@ -363,7 +380,14 @@ temporary password is changed).
 | `GET /projects/:id` | founders, leads, employees | the project, its robots and its whole record |
 | `DELETE /projects/:id` | founders | the record goes too; robots stay in the build list |
 | `PUT /projects/:id/units/:unitId`, `DELETE …` | founders, leads | put a robot on the project or take it off (`409` if it is on another project) |
-| `GET /projects/search?q=&kind=issue,visit,note,project&status=open&category=&projectId=` | founders, leads, employees | every word must match |
+| `GET /projects/search?q=&kind=issue,visit,note,project,client&status=open&category=&projectId=&clientId=` | founders, leads, employees | every word must match (error codes in any spelling); ranked. `mode=similar&exclude=<id>&limit=` for "seen before" |
+| `GET /clients`, `GET /clients/:id` | founders, leads, employees | the client with its projects, robots (with software) and equipment |
+| `POST /clients`, `PATCH /clients/:id` | founders, leads | `409` if a client with that name exists |
+| `DELETE /clients/:id` | founders | `409` while it has projects |
+| `POST /projects/:id/equipment`, `PATCH`/`DELETE /projects/:id/equipment/:eid` | founders, leads | |
+| `POST /units` with `alreadyBuilt: true, serial, softwareVersion, projectId, installedOn` | founders, leads | a robot from before the hub |
+| `POST /units/:id/software` | founders, leads; employees for robots on a project | `{version, on, note}` |
+| `GET /import/templates`, `POST /import/:kind` | super user | `{rows: [{header: value}], dryRun}`; dry run unless `dryRun: false` |
 | `POST /projects/:id/entries` | founders, leads, employees | `{kind: issue, title, …}`, `{kind: visit, date, engineers, purpose, workDone, nextSteps, hours, problems: [{title, solution, rootCause, status, category, severity, unitId}]}` or `{kind: note, text}` |
 | `PATCH /project-entries/:id` | the author, leads, founders; anyone may set `status`, `rootCause`, `solution` | |
 | `POST /project-entries/:id/updates` | founders, leads, employees | `{text}` |

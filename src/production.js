@@ -8,7 +8,10 @@
  *   GET    /production/templates           the stage list each model starts with
  *   GET    /units?model=&phase=&q=&assignee=me
  *   GET    /units/summary                  counts for the board and the home page
- *   POST   /units                          { model, colour, customer, enquiryRef, orderedOn, targetDate, priority, notes }   (lead, founder)
+ *   POST   /units                          { model, colour, customer, enquiryRef, orderedOn, targetDate, priority, notes,
+ *                                           softwareVersion, projectId, serial, alreadyBuilt }   (lead, founder)
+ *                                           alreadyBuilt: a robot built (and maybe installed) before the hub: every stage done;
+ *                                           serial: keep its existing serial number
  *   GET    /units/:id
  *   PATCH  /units/:id                      details, onHold, dispatchedOn, installedOn                                    (lead, founder)
  *   PATCH  /units/:id/stages/:key          { state, assigneeId, note }   lead/founder any stage; employees only stages given to them
@@ -16,6 +19,8 @@
  *   DELETE /units/:id/stages/:key          (lead, founder)
  *   POST   /units/:id/notes                { text }
  *   DELETE /units/:id                      (founder)
+ *   POST   /units/:id/software             { version, on, note }  the software now on the robot (lead, founder; and engineers
+ *                                           who log on projects, for a robot on a project). Every version is kept in softwareHistory.
  */
 
 const crypto = require('crypto');
@@ -55,6 +60,7 @@ const CUSTOM_STAGES = [
 const STAGE_STATES = ['pending', 'in_progress', 'done', 'blocked', 'skipped'];
 const PRIORITIES = ['normal', 'high', 'urgent'];
 const PHASES = ['planned', 'in_build', 'testing', 'ready', 'dispatched', 'installed'];
+const SERIAL_RX = /^[A-Z0-9][A-Z0-9\-_/.]{1,39}$/;
 
 const templateFor = (model) => (model === 'Custom' ? CUSTOM_STAGES : ROBOT_STAGES);
 const newStage = ([key, label, area]) => ({ key, label, area, state: 'pending', assigneeId: null, assignee: null, startedAt: null, doneAt: null, doneBy: null, note: '' });
@@ -78,7 +84,7 @@ function progressOf(u) {
   return { done, total: st.length, pct: st.length ? Math.round((done / st.length) * 100) : 0, current: current && { key: current.key, label: current.label, state: current.state, assignee: current.assignee }, blocked: st.some((s) => s.state === 'blocked') };
 }
 
-function createProduction({ db, config, requireUser }) {
+function createProduction({ db, config, requireUser, hooks = {} }) {
   const units = db.collection('production_units');
   const users = db.collection('users');
   const counters = db.collection('counters');
@@ -94,8 +100,12 @@ function createProduction({ db, config, requireUser }) {
 
   async function nextSerial(model) {
     const prefix = MODELS[model].prefix;
-    const r = await counters.findOneAndUpdate({ _id: `unit:${prefix}` }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' });
-    return `NX-${prefix}-${String(r.seq).padStart(4, '0')}`;
+    // Skips numbers already taken by robots added with their own serial (built before the hub).
+    for (;;) {
+      const r = await counters.findOneAndUpdate({ _id: `unit:${prefix}` }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' });
+      const serial = `NX-${prefix}-${String(r.seq).padStart(4, '0')}`;
+      if (!(await units.findOne({ serial }))) return serial;
+    }
   }
   const event = (req, text) => ({ at: new Date(), by: req.user.name, text });
 
@@ -122,6 +132,7 @@ function createProduction({ db, config, requireUser }) {
     if (b.onHold !== undefined) out.onHold = b.onHold === true;
     if (b.holdReason !== undefined) out.holdReason = str(b.holdReason, 300);
     if (b.description !== undefined) out.description = str(b.description, 2000);
+    if (b.softwareVersion !== undefined) out.softwareVersion = str(b.softwareVersion, 40).replace(/^v(?=\d)/i, '');
     return { value: out };
   }
 
@@ -141,7 +152,7 @@ function createProduction({ db, config, requireUser }) {
     if (req.query.assignee === 'me') list = list.filter((u) => u.stages.some((s) => s.assigneeId === req.user._id && s.state !== 'done' && s.state !== 'skipped'));
     if (req.query.q) {
       const q = String(req.query.q).toLowerCase();
-      list = list.filter((u) => [u.serial, u.model, u.customer?.company, u.customer?.city, u.enquiryRef].some((x) => String(x || '').toLowerCase().includes(q)));
+      list = list.filter((u) => [u.serial, u.model, u.customer?.company, u.customer?.city, u.enquiryRef, u.software?.version].some((x) => String(x || '').toLowerCase().includes(q)));
     }
     res.json({ units: list });
   }));
@@ -168,19 +179,69 @@ function createProduction({ db, config, requireUser }) {
     });
   }));
 
-  router.post('/units', requireUser('production.manage'), wrap(async (req, res) => {
-    const { value, error } = normaliseUnit(req.body || {}, false);
-    if (error) return res.status(400).json({ error });
+  /** Checks a serial typed in (a robot from before the hub). Returns an error text or null. */
+  async function serialProblem(serial) {
+    if (!SERIAL_RX.test(serial)) return 'A serial number has 2 to 40 letters, digits and - _ / .';
+    if (await units.findOne({ serial })) return `${serial} is already in the build list`;
+    return null;
+  }
+
+  /** A new unit (also used by the bulk import). opts: serial, alreadyBuilt, projectId. */
+  async function createUnit(value, actor, opts = {}) {
     const now = new Date();
+    const { softwareVersion, ...rest } = value;
+    const built = !!opts.alreadyBuilt;
+    const doneOn = rest.installedOn || rest.dispatchedOn || rest.orderedOn || today();
     const doc = {
-      _id: crypto.randomUUID(), serial: await nextSerial(value.model), colour: '', customer: { company: '', city: '' }, enquiryRef: '',
-      orderedOn: today(), targetDate: null, dispatchedOn: null, installedOn: null, priority: 'normal', onHold: false, holdReason: '', description: '',
-      ...value,
-      stages: templateFor(value.model).map(newStage),
-      notes: [], history: [{ at: now, by: req.user.name, text: 'Unit added' }], createdBy: req.user.name, createdAt: now, updatedAt: now,
+      _id: crypto.randomUUID(), serial: opts.serial || await nextSerial(value.model), colour: '', customer: { company: '', city: '' }, enquiryRef: '',
+      orderedOn: built ? null : today(), targetDate: null, dispatchedOn: null, installedOn: null, priority: 'normal', onHold: false, holdReason: '', description: '',
+      ...rest,
+      projectId: opts.projectId || null,
+      software: softwareVersion ? { version: softwareVersion, since: doneOn } : null,
+      softwareHistory: softwareVersion ? [{ version: softwareVersion, on: doneOn, by: actor.name, note: built ? 'Recorded when the robot was added' : '' }] : [],
+      stages: templateFor(value.model).map((s) => (built ? { ...newStage(s), state: 'done', doneAt: new Date(`${doneOn}T12:00:00Z`), doneBy: 'Before the hub', note: '' } : newStage(s))),
+      notes: [], history: [{ at: now, by: actor.name, text: built ? 'Added as a robot built before the hub' : 'Unit added' }], createdBy: actor.name, createdAt: now, updatedAt: now,
     };
     if (value.model === 'NexC5' && !doc.colour) doc.colour = 'White';
     await units.insertOne(doc);
+    return doc;
+  }
+
+  /** Records the software now on a robot; keeps every earlier version. */
+  async function setSoftware(u, version, on, note, actor) {
+    const v = str(version, 40).replace(/^v(?=\d)/i, '');
+    if (!v) return { error: 'Which version is on the robot now?' };
+    const date = str(on, 10) || today();
+    if (!D.isDate(date)) return { error: 'The date must look like 2026-11-18' };
+    if (u.software?.version === v) return { unit: u, unchanged: true };
+    const entry = { version: v, on: date, by: actor.name, note: str(note, 300) };
+    const from = u.software?.version;
+    await units.updateOne({ _id: u._id }, {
+      $set: { software: { version: v, since: date }, softwareHistory: [...(u.softwareHistory || []), entry], updatedAt: new Date() },
+      $push: { history: { at: new Date(), by: actor.name, text: `Software ${from ? `${from} → ${v}` : v}${entry.note ? `: ${entry.note}` : ''}` } },
+    });
+    if (u.projectId && hooks.logToProject) await hooks.logToProject(u.projectId, actor, `${u.serial} software ${from ? `${from} → ${v}` : `recorded: ${v}`}`);
+    return { unit: await units.findOne({ _id: u._id }) };
+  }
+
+  router.post('/units', requireUser('production.manage'), wrap(async (req, res) => {
+    const b = req.body || {};
+    const { value, error } = normaliseUnit(b, false);
+    if (error) return res.status(400).json({ error });
+    const opts = { alreadyBuilt: b.alreadyBuilt === true };
+    if (b.serial) {
+      opts.serial = str(b.serial, 40).toUpperCase();
+      const bad = await serialProblem(opts.serial);
+      if (bad) return res.status(bad.includes('already') ? 409 : 400).json({ error: bad });
+    }
+    if (b.projectId) {
+      if (!can(req.user, 'projects.manage')) return res.status(403).json({ error: 'Your role does not allow putting robots on projects' });
+      const p = await db.collection('projects').findOne({ _id: str(b.projectId, 60) });
+      if (!p) return res.status(400).json({ error: 'That project was not found' });
+      opts.projectId = p._id;
+    }
+    const doc = await createUnit(value, req.user, opts);
+    if (opts.projectId && hooks.logToProject) await hooks.logToProject(opts.projectId, req.user, `Robot ${doc.serial} added${opts.alreadyBuilt ? ' (built before the hub)' : ''}`);
     res.status(201).json({ unit: view(doc) });
   }));
 
@@ -199,6 +260,12 @@ function createProduction({ db, config, requireUser }) {
     const { value, error } = normaliseUnit(req.body || {}, true);
     if (error) return res.status(400).json({ error });
     delete value.model; // the serial number belongs to the model
+    const sw = value.softwareVersion;
+    delete value.softwareVersion;
+    if (sw !== undefined && sw && sw !== u.software?.version) {
+      const r = await setSoftware(u, sw, req.body.softwareOn, req.body.softwareNote, req.user);
+      if (r.error) return res.status(400).json({ error: r.error });
+    }
     const changes = [];
     if (value.onHold !== undefined && value.onHold !== !!u.onHold) changes.push(value.onHold ? `Put on hold${value.holdReason ? `: ${value.holdReason}` : ''}` : 'Taken off hold');
     if (value.dispatchedOn !== undefined && value.dispatchedOn !== u.dispatchedOn) changes.push(value.dispatchedOn ? `Dispatched on ${value.dispatchedOn}` : 'Dispatch date removed');
@@ -208,6 +275,16 @@ function createProduction({ db, config, requireUser }) {
     if (changes.length) update.$push = { history: event(req, changes.join(' · ')) };
     await units.updateOne({ _id: u._id }, update);
     res.json({ unit: view(await load(u._id)) });
+  }));
+
+  router.post('/units/:id/software', requireUser('production.manage', 'projects.log'), wrap(async (req, res) => {
+    const u = await load(req.params.id);
+    if (!u) return res.status(404).json({ error: 'Unit not found' });
+    if (!can(req.user, 'production.manage') && !u.projectId) return res.status(403).json({ error: 'Only a lead can change a robot that is not on a project' });
+    const b = req.body || {};
+    const r = await setSoftware(u, b.version, b.on, b.note, req.user);
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ unit: view(r.unit), unchanged: !!r.unchanged });
   }));
 
   router.patch('/units/:id/stages/:key', requireUser('production.update_assigned'), wrap(async (req, res) => {
@@ -287,7 +364,7 @@ function createProduction({ db, config, requireUser }) {
     res.json({ ok: true });
   }));
 
-  return { router, phaseOf, progressOf };
+  return { router, phaseOf, progressOf, svc: { normaliseUnit, createUnit, setSoftware, serialProblem } };
 }
 
 module.exports = { createProduction, MODELS, ROBOT_STAGES, STAGE_STATES, PHASES, phaseOf, progressOf };

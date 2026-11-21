@@ -12,7 +12,8 @@ const { createContactRoutes } = require('./contact');
 const { createAuth } = require('./auth');
 const { createHr } = require('./hr');
 const { createProduction } = require('./production');
-const { createProjects } = require('./projects');
+const { createProjects, migrateClients } = require('./projects');
+const { createImporter, importRoutes } = require('./importer');
 const { can, isTop, ROLES, ROLE_LABELS } = require('./permissions');
 
 const toInt = (v, fallback, max) => {
@@ -427,10 +428,14 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   api.use(auth.router);
   const hr = createHr({ db, config, requireUser: auth.requireUser, publicUser: auth.publicUser });
   api.use(hr.router);
-  const production = createProduction({ db, config, requireUser: auth.requireUser });
+  const productionHooks = {};
+  const production = createProduction({ db, config, requireUser: auth.requireUser, hooks: productionHooks });
   api.use(production.router);
   const projectsApi = createProjects({ db, config, requireUser: auth.requireUser });
   api.use(projectsApi.router);
+  productionHooks.logToProject = projectsApi.svc.logToProject;
+  const importer = createImporter({ db, projectsSvc: projectsApi.svc, productionSvc: production.svc });
+  api.use(importRoutes({ requireUser: auth.requireUser, importer }));
   api.use(createContactRoutes({ db, config, requireUser: auth.requireUser, notifier }));
 
   // ── Live updates for the dashboard ──────────────────────────
@@ -536,6 +541,8 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   });
   // Run once at start: creates, updates or switches off the hidden super user (see auth.js).
   app.locals.ensureSuperuser = auth.ensureSuperuser;
+  // Run once at start, before the super user: brings data from older versions up to date.
+  app.locals.migrate = async (log = console) => { await migrateClients(db, log); if (cache.enabled) await cache.bumpAll(); };
   app.locals.cache = cache;
   app.locals.live = live;
   return app;
