@@ -14,6 +14,7 @@ const { createHr } = require('./hr');
 const { createProduction } = require('./production');
 const { createProjects, migrateClients } = require('./projects');
 const { createImporter, importRoutes } = require('./importer');
+const { createInventory } = require('./inventory');
 const { can, isTop, ROLES, ROLE_LABELS } = require('./permissions');
 
 const toInt = (v, fallback, max) => {
@@ -31,7 +32,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const PUBLIC_BUG_FIELDS = { _id: 0, number: 1, title: 1, status: 1, fixedInVersion: 1, clientReportId: 1, createdAt: 1, updatedAt: 1 };
 
 // Answers that are never cached: time-sensitive, not JSON, or already cheap.
-const NO_CACHE = [/^\/stream$/, /^\/notifications\//, /^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/attachments\//];
+const NO_CACHE = [/^\/stream$/, /^\/notifications\//, /^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/inventory\/(export\.(xlsx|pdf)|template\.csv)$/, /^\/attachments\//];
 // Bug reports, releases and machines: the robots write these often, so they have their own generation.
 const ROBOT_AREA = /^\/(apps|bugs|attachments)(\/|$)/;
 
@@ -436,6 +437,7 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   productionHooks.logToProject = projectsApi.svc.logToProject;
   const importer = createImporter({ db, projectsSvc: projectsApi.svc, productionSvc: production.svc });
   api.use(importRoutes({ requireUser: auth.requireUser, importer }));
+  api.use(createInventory({ db, requireUser: auth.requireUser }).router);
   api.use(createContactRoutes({ db, config, requireUser: auth.requireUser, notifier }));
 
   // ── Live updates for the dashboard ──────────────────────────

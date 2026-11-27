@@ -115,7 +115,7 @@ class Collection {
 }
 
 function createFakeDb() {
-  const unique = { bug_reports: ['number', 'clientReportId'], update_events: ['clientEventId'], attachments: ['clientAttachmentId'], contact_submissions: ['ref'], users: ['email'], holidays: ['date'], production_units: ['serial'], projects: ['ref'], clients: ['ref', 'nameKey'] };
+  const unique = { bug_reports: ['number', 'clientReportId'], update_events: ['clientEventId'], attachments: ['clientAttachmentId'], contact_submissions: ['ref'], users: ['email'], holidays: ['date'], production_units: ['serial'], projects: ['ref'], clients: ['ref', 'nameKey'], inventory_items: ['ref'] };
   const cols = {};
   return {
     collection: (n) => { cols[n] = cols[n] || new Collection(unique[n]); return cols[n]; },

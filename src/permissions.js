@@ -7,6 +7,7 @@
  *   founder   everything
  *   hr        people: accounts, attendance, leave, holidays, calendar. No customer data, no bugs, no production.
  *   lead      runs a team: production, bug triage, website enquiries, their team's attendance and leave
+ *   inventory view + export: everyone; add, edit, import: founder, hr, lead; delete: founder
  *   employee  their own attendance and leave, the calendar, production (updates the stages given to them),
  *             projects (read, log problems and site visits), bug reports (read and comment)
  *
@@ -53,6 +54,10 @@ const PERMISSIONS = {
   'clients.delete': ['founder'],
   // bulk import from spreadsheets (people, clients, projects, robots, equipment, past problems): the super user only
   'data.import': [],
+  // inventory (separate Nextup inventory app): IT gadgets, panel items, robot items
+  'inventory.view': ALL,                              // see every group, search, export PDF / Excel
+  'inventory.manage': ['founder', 'hr', 'lead'],      // add, edit, stock in/out, CSV import
+  'inventory.delete': ['founder'],
   // website enquiries (customer contact details)
   'enquiries.view': ['founder', 'lead'],
   'enquiries.edit': ['founder', 'lead'],

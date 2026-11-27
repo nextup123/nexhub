@@ -18,6 +18,7 @@ const { createFakeDb } = require('./fakeDb');
     await require('./seedContacts').seedContacts(db);
     await require('./seedCompany').seedCompany(db);
     await require('./seedProjects').seedProjects(db);
+    await require('./seedInventory').seedInventory(db);
   }
   const app = createApp({ db, config: cfg });
   await app.locals.migrate();

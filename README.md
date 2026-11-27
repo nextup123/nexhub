@@ -80,7 +80,7 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
    A service made from an older version may still have `MONGO_DB`, `COMPANY_TZ`, `IP_SALT` or `CONTACT_ORIGINS`:
    they keep working, and can be deleted if they hold the default.
 3. Open `https://<your-service>.onrender.com/api/v1/health`.
-   `{"ok":true,"version":"1.9.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
+   `{"ok":true,"version":"1.10.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
    No `version` in that answer means Render still runs a copy from before pictures: deploy this version again.
 4. On each robot PC: Software update → Update settings → Report server address
    `https://<your-service>.onrender.com`. In the mobile app: the same address.
@@ -190,7 +190,7 @@ PORT=4060 node test/serve-fake.js
 
 runs it on an in-memory stand-in (data is lost when it stops). `npm test` runs the API tests on
 the same stand-in, with the cache on (`TEST_CACHE=off` without it, `TEST_REDIS_URL=redis://127.0.0.1:6379` against a real Redis). Add `SEED=1` for a sample company: 12 people, 6 projects for 5 clients with equipment, site visits and solved problems, robots in the build, attendance,
-leave, holidays, events, bug reports and 24 website enquiries. Everyone's password is `nextup-demo`:
+leave, holidays, events, bug reports, 24 website enquiries and 20 inventory items. Everyone's password is `nextup-demo`:
 
 | Sign in as | Role |
 |---|---|
@@ -265,6 +265,9 @@ on a team or given a build stage, and the dashboard cannot change, reset or swit
 | Read and comment on bug reports | ✓ | | ✓ | ✓ (no customer phone/email) |
 | Change bug status and priority, publish release notes | ✓ | | ✓ | |
 | Add or change the apps | ✓ | | | |
+| Inventory: see every group, search, export PDF and Excel | ✓ | ✓ | ✓ | ✓ |
+| Inventory: add, edit, stock in/out, CSV import | ✓ | ✓ | ✓ | |
+| Inventory: delete items | ✓ | | | |
 
 The reasoning: customer contact details (enquiries, bug reporters) stay with founders and leads, and a
 project's site contact also with its team, who need it on site. Every engineer can read every project,
@@ -333,6 +336,32 @@ skipped, or only have their empty fields filled in, so importing the same file t
 People get a temporary password, shown once (download them as CSV and give each privately); they pick
 their own at first sign-in. Import in this order: people, clients, projects, robots, equipment, problems.
 Up to 3000 rows at a time. API: `GET /import/templates`, `POST /import/:kind {rows, dryRun}`.
+
+### Inventory (1.10)
+
+The separate **Nextup inventory** app (`nextup-inventory`, its own package) keeps what the company
+owns in three groups: **IT gadgets** (CPUs, monitors, keyboards…), **panel items** (SMPS, drives, motors…)
+and **robot items** (20 kg payload robot 6 Nos, 5 kg payload robot 3 Nos, controllers, spares). It signs
+in with the same hub accounts. Every item has a name and a quantity, and optionally type, make, model,
+payload (robots), specs, unit, location, condition, minimum stock (low-stock warning), assigned to,
+serial numbers, supplier, purchase date, unit price and notes. Every quantity change is kept with who
+and why. Refs: `IT-n`, `PNL-n`, `RBT-n`. Collection `inventory_items`.
+
+| | |
+|---|---|
+| `GET /inventory/meta` | groups, type suggestions, conditions, CSV columns |
+| `GET /inventory/summary` | per group: items, total quantity, low stock, value |
+| `GET /inventory?category=it\|panel\|robot&q=&type=&condition=&low=1&sort=` | the list |
+| `POST /inventory` · `GET/PATCH/DELETE /inventory/:id` | one item (`:id` or its ref) |
+| `POST /inventory/:id/adjust {delta, note}` | stock in (+) or out (−) |
+| `POST /inventory/bulk-delete {ids}` | several at once |
+| `GET /inventory/template.csv?category=` | a CSV to fill in |
+| `POST /inventory/import {category, csv, dryRun, onExisting}` | CSV import; `dryRun` (the default) saves nothing; items already there (same ref, or same name + model) are `update`d (quantity set to the file's), `add`ed to, or `skip`ped |
+| `GET /inventory/export.xlsx` · `GET /inventory/export.pdf` | same filters as the list; Excel has a summary sheet and a sheet per group, PDF is A4 landscape |
+
+CSV headers are matched loosely (*Item*, *Qty*, *Nos*, *Brand*, *Model no*, *Remarks*…); comma,
+semicolon or tab separated; dates `2026-11-27`, `27/11/2026` or `27 Nov 2026`. Up to 5000 rows.
+New dependencies: `exceljs` and `pdfkit` (Render installs them on deploy).
 
 ### Production
 

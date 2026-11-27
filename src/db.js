@@ -21,6 +21,7 @@ const M = require('./models');
  *   projects             customer installations: robots, team, details
  *   clients              the companies projects are for, with their contacts
  *   project_entries      a project's record: problems and solutions, site visits, notes
+ *   inventory_items      what the company owns: IT gadgets, panel items, robot items (src/inventory.js)
  */
 
 // MongoDB-side validation, so documents written by other tools (scripts,
@@ -121,6 +122,11 @@ const VALIDATORS = {
     properties: { status: { enum: ['planning', 'in_progress', 'commissioning', 'live', 'on_hold', 'closed'] }, team: { bsonType: 'array' } },
   },
   clients: { bsonType: 'object', required: ['_id', 'ref', 'name', 'nameKey'], properties: { contacts: { bsonType: 'array' } } },
+  inventory_items: {
+    bsonType: 'object',
+    required: ['_id', 'ref', 'category', 'name', 'quantity'],
+    properties: { category: { enum: ['it', 'panel', 'robot'] }, name: { bsonType: 'string' }, quantity: { bsonType: ['int', 'long', 'double'], minimum: 0 }, condition: { enum: ['new', 'working', 'needs_repair', 'faulty', 'scrapped'] } },
+  },
   project_entries: {
     bsonType: 'object',
     required: ['_id', 'projectId', 'kind'],
@@ -169,6 +175,7 @@ const INDEXES = {
   production_units: [[{ serial: 1 }, { unique: true }], [{ createdAt: -1 }, {}], [{ projectId: 1 }, {}]],
   projects: [[{ ref: 1 }, { unique: true }], [{ status: 1, updatedAt: -1 }, {}], [{ clientId: 1 }, {}]],
   clients: [[{ ref: 1 }, { unique: true }], [{ nameKey: 1 }, { unique: true }]],
+  inventory_items: [[{ ref: 1 }, { unique: true }], [{ category: 1, nameKey: 1 }, {}], [{ updatedAt: -1 }, {}]],
   project_entries: [[{ projectId: 1, createdAt: -1 }, {}], [{ kind: 1, status: 1 }, {}], [{ kind: 1, date: 1 }, {}]],
 };
 
