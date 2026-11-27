@@ -20,7 +20,7 @@ const { can, isTop, ROLES, ROLE_LABELS } = require('./permissions');
 const toInt = (v, fallback, max) => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 0 ? Math.min(n, max ?? n) : fallback;
-};
+}; 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // No sign-in yet (keys come later). Who made a change is whatever name the caller gives:
 // the mobile app sends X-User-Name, release scripts send publishedBy.
