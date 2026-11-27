@@ -1,7 +1,7 @@
 {
   "name": "nextup-hub-api",
-  "version": "1.10.0",
-  "description": "Nextup company hub API: accounts and roles, attendance, leave, calendar, robot build stages, bug reports, release notes, update records, the website contact form and the inventory (Express + MongoDB)",
+  "version": "1.11.0",
+  "description": "Nextup company hub API: accounts and roles, attendance, leave, calendar, robot build stages, bug reports, release notes, update records, the website contact form, the inventory and tagged project assets (Express + MongoDB)",
   "private": true,
   "main": "src/index.js",
   "scripts": {
@@ -16,6 +16,7 @@
     "express": "^4.18.2",
     "mongodb": "^6.10.0",
     "pdfkit": "^0.17.2",
+    "qrcode": "^1.5.4",
     "redis": "^4.7.1"
   },
   "engines": {

@@ -41,26 +41,39 @@ const nameKey = (s) => str(s, 160).toLowerCase().replace(/\s+/g, ' ');
 
 const CATEGORIES = {
   it: {
-    label: 'IT gadgets', short: 'IT', prefix: 'IT',
+    label: 'IT', short: 'IT', prefix: 'IT', tracking: 'unit',
     types: ['CPU', 'Monitor', 'Keyboard', 'Mouse', 'Laptop', 'Printer', 'Router / switch', 'UPS', 'Webcam', 'Headset', 'Hard disk', 'Cable', 'Other'],
     example: { name: 'Dell 24" monitor', quantity: '5', type: 'Monitor', make: 'Dell', model: 'P2422H', specs: '24 inch, 1080p', location: 'Office, first floor', assignedTo: '' },
   },
-  panel: {
-    label: 'Panel items', short: 'Panel', prefix: 'PNL',
-    types: ['SMPS', 'Servo drive', 'Stepper driver', 'VFD', 'Servo motor', 'Stepper motor', 'Motor', 'PLC', 'HMI', 'Relay', 'Contactor', 'MCB', 'Sensor', 'Terminal block', 'Cable', 'Other'],
+  electrical: {
+    label: 'Electrical & electronics', short: 'Electrical', prefix: 'EE', tracking: 'unit',
+    types: ['SMPS', 'Servo drive', 'Stepper driver', 'VFD', 'Servo motor', 'Stepper motor', 'Motor', 'PLC', 'HMI', 'Relay', 'Contactor', 'MCB', 'Sensor', 'Controller', 'Teach pendant', 'PCB', 'Terminal block', 'Cable', 'Other'],
     example: { name: '24 V 10 A SMPS', quantity: '12', type: 'SMPS', make: 'Mean Well', model: 'LRS-250-24', specs: '24 V DC, 10.4 A', location: 'Store, rack B2', assignedTo: '' },
   },
-  robot: {
-    label: 'Robot items', short: 'Robot', prefix: 'RBT',
-    types: ['Robot', 'Controller', 'Teach pendant', 'Gripper', 'Joint module', 'Spare part', 'Other'],
-    example: { name: '20 kg payload robot', quantity: '6', type: 'Robot', make: 'Nextup', model: 'NexR20', payloadKg: '20', specs: '1.8 m reach', location: 'Assembly bay', assignedTo: '' },
+  raw_material: {
+    label: 'Raw material', short: 'Raw material', prefix: 'RM', tracking: 'lot',
+    types: ['Aluminium', 'Mild steel', 'Stainless steel', 'Sheet metal', 'Round bar', 'Plate', 'Pipe / tube', 'Plastic', 'Paint', 'Other'],
+    example: { name: 'Aluminium 6061 round bar, 50 mm', quantity: '12', unit: 'm', type: 'Aluminium', make: '', model: '', specs: '6061-T6, 50 mm diameter', location: 'Raw material rack', assignedTo: '' },
+  },
+  mechanical: {
+    label: 'Mechanical', short: 'Mechanical', prefix: 'MEC', tracking: 'lot',
+    types: ['Nut', 'Bolt', 'Screw', 'Washer', 'Bearing', 'Gearbox', 'Coupling', 'Belt / pulley', 'Linear guide', 'Bracket', 'Joint module', 'Gripper', 'Pneumatic', 'Spare part', 'Other'],
+    example: { name: 'M6 x 20 hex bolt', quantity: '500', type: 'Bolt', make: 'Unbrako', model: 'M6x20 12.9', specs: 'Grade 12.9, zinc plated', location: 'Store, bin 21', assignedTo: '' },
+  },
+  machinery: {
+    label: 'Machinery', short: 'Machinery', prefix: 'MCH', tracking: 'unit',
+    types: ['Lathe', 'VMC', 'CNC router', 'Milling machine', 'Drilling machine', 'Grinder', 'Welding machine', 'Compressor', '3D printer', 'Laser cutter', 'Other'],
+    example: { name: 'VMC 850', quantity: '1', type: 'VMC', make: 'BFW', model: 'Gaurav 850', specs: '850 x 500 x 500 mm travel', location: 'Machine shop', assignedTo: '' },
   },
 };
+// Before 1.11 there were three groups. Old names still work in CSV files and links.
+const LEGACY = { panel: 'electrical', robot: 'mechanical' };
+const ELECTRICAL_TYPES = new Set(['controller', 'teachpendant', 'robot', 'pcb']);
 const CATEGORY_KEYS = Object.keys(CATEGORIES);
 const CONDITIONS = { new: 'New', working: 'Working', needs_repair: 'Needs repair', faulty: 'Faulty', scrapped: 'Scrapped' };
 
 // The columns of a CSV file (import, template). `category` is only needed when one file has several groups.
-const COLUMNS = ['category', 'ref', 'name', 'quantity', 'unit', 'type', 'make', 'model', 'payloadKg', 'specs', 'location', 'condition', 'minQuantity', 'assignedTo', 'serials', 'supplier', 'purchasedOn', 'unitPrice', 'notes'];
+const COLUMNS = ['category', 'ref', 'name', 'quantity', 'unit', 'tracking', 'type', 'make', 'model', 'payloadKg', 'specs', 'location', 'condition', 'minQuantity', 'assignedTo', 'serials', 'supplier', 'purchasedOn', 'unitPrice', 'notes'];
 const ALIASES = {
   item: 'name', itemname: 'name', assetname: 'name', asset: 'name', description: 'name', product: 'name', particulars: 'name',
   qty: 'quantity', quantity: 'quantity', nos: 'quantity', no: 'quantity', count: 'quantity', stock: 'quantity', units: 'quantity',
@@ -77,7 +90,7 @@ const ALIASES = {
   vendor: 'supplier', purchasedate: 'purchasedOn', purchasedon: 'purchasedOn', dateofpurchase: 'purchasedOn', boughton: 'purchasedOn',
   price: 'unitPrice', rate: 'unitPrice', cost: 'unitPrice', unitprice: 'unitPrice', unitcost: 'unitPrice',
   remarks: 'notes', remark: 'notes', comment: 'notes', comments: 'notes', note: 'notes',
-  group: 'category', section: 'category', categoryname: 'category', id: 'ref', code: 'ref', assetcode: 'ref', assetid: 'ref',
+  group: 'category', section: 'category', track: 'tracking', trackby: 'tracking', tagging: 'tracking', categoryname: 'category', id: 'ref', code: 'ref', assetcode: 'ref', assetid: 'ref',
 };
 const MAX_ROWS = 5000;
 
@@ -92,8 +105,10 @@ function categoryOf(v) {
   if (!k) return '';
   if (CATEGORY_KEYS.includes(k)) return k;
   if (/^(it|itgadget|gadget|computer|office)/.test(k)) return 'it';
-  if (/^(panel|pnl|electrical|electric)/.test(k)) return 'panel';
-  if (/^(robot|rbt)/.test(k)) return 'robot';
+  if (/^(panel|pnl|ee|electric|electronic)/.test(k)) return 'electrical';
+  if (/^(raw|rm|material|metal|stock)/.test(k)) return 'raw_material';
+  if (/^(mech|mec|hardware|fastener|robot|rbt)/.test(k)) return 'mechanical';
+  if (/^(machine|mch|equipment|tool)/.test(k)) return 'machinery';
   return '';
 }
 function conditionOf(v) {
@@ -137,7 +152,7 @@ function normaliseItem(input = {}, { partial = false } = {}) {
   const has = (k) => input[k] !== undefined;
   if (!partial || has('category')) {
     v.category = categoryOf(input.category);
-    if (!v.category) return { error: 'category must be it, panel or robot' };
+    if (!v.category) return { error: `category must be one of: ${CATEGORY_KEYS.join(', ')}` };
   }
   if (!partial || has('name')) {
     v.name = str(input.name, 120);
@@ -152,6 +167,11 @@ function normaliseItem(input = {}, { partial = false } = {}) {
   for (const [k, max] of Object.entries(texts)) if (!partial || has(k)) v[k] = str(input[k], max);
   if (!partial && !v.unit) v.unit = 'pcs';
   if (partial && has('unit') && !v.unit) v.unit = 'pcs';
+  if (!partial || has('tracking')) {
+    const t = key(input.tracking);
+    v.tracking = /^(lot|batch|bulk|consumable)/.test(t) ? 'lot' : /^(unit|piece|each|individual|serial)/.test(t) ? 'unit' : (v.category ? CATEGORIES[v.category].tracking : '');
+    if (!v.tracking) delete v.tracking;
+  }
   if (!partial || has('condition')) {
     const c = conditionOf(input.condition);
     if (c === null) return { error: `Condition must be one of: ${Object.values(CONDITIONS).join(', ')}` };
@@ -313,9 +333,9 @@ function createInventory({ db, requireUser: requireLogin, open = false }) {
 
   router.get('/inventory/template.csv', requireUser('inventory.view'), (req, res) => {
     const cat = categoryOf(req.query.category);
-    const cols = COLUMNS.filter((c) => c !== 'ref' && (cat ? c !== 'category' : true) && (cat === 'robot' || c !== 'payloadKg' || !cat));
+    const cols = COLUMNS.filter((c) => c !== 'ref' && c !== 'payloadKg' && (cat ? c !== 'category' : true));
     const examples = cat ? [{ ...CATEGORIES[cat].example }] : CATEGORY_KEYS.map((k) => ({ category: k, ...CATEGORIES[k].example }));
-    const lines = [cols.join(','), ...examples.map((e) => cols.map((c) => csvCell(c === 'unit' ? 'pcs' : c === 'condition' ? 'Working' : e[c])).join(','))];
+    const lines = [cols.join(','), ...examples.map((e) => cols.map((c) => csvCell(c === 'unit' ? (e.unit || 'pcs') : c === 'condition' ? 'Working' : c === 'tracking' ? (CATEGORIES[cat || e.category].tracking === 'lot' ? 'Lot' : 'Each piece') : e[c])).join(','))];
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="nextup-inventory-${cat || 'all'}-template.csv"`);
     res.send(`﻿${lines.join('\r\n')}\r\n`);
@@ -389,7 +409,7 @@ function createInventory({ db, requireUser: requireLogin, open = false }) {
       const raw = rows[i];
       const line = i + 2;
       const fileCat = categoryOf(raw.category);
-      if (raw.category && !fileCat) { counts.failed++; results.push({ line, name: raw.name || '', outcome: 'failed', message: `Unknown category "${raw.category}" (use IT, Panel or Robot)` }); continue; }
+      if (raw.category && !fileCat) { counts.failed++; results.push({ line, name: raw.name || '', outcome: 'failed', message: `Unknown category "${raw.category}" (use IT, Electrical, Raw material, Mechanical or Machinery)` }); continue; }
       const category = fileCat || pageCat;
       if (!category) { counts.failed++; results.push({ line, name: raw.name || '', outcome: 'failed', message: 'No category: add a category column, or import from one of the three pages' }); continue; }
       if (pageCat && fileCat && fileCat !== pageCat) { counts.failed++; results.push({ line, name: raw.name || '', outcome: 'failed', message: `This row is for ${CATEGORIES[fileCat].label}, not ${CATEGORIES[pageCat].label}` }); continue; }
@@ -439,7 +459,13 @@ function createInventory({ db, requireUser: requireLogin, open = false }) {
   router.get('/inventory/:id', requireUser('inventory.view'), wrap(async (req, res) => {
     const item = await findItem(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
-    res.json({ item: { ...item, low: isLow(item) } });
+    // Where the tagged ones went (assets taken from this stock line, still in use).
+    const used = await db.collection('assets').find({ itemId: item._id, status: { $in: ['active', 'faulty'] } }, { projection: { tag: 1, quantity: 1, projectId: 1 } }).toArray();
+    const pids = [...new Set(used.map((a) => a.projectId).filter(Boolean))];
+    const ps = await Promise.all(pids.map((id) => db.collection('projects').findOne({ _id: id }, { projection: { ref: 1, name: 1 } })));
+    const allocations = [...pids.map((id, i) => ({ project: ps[i] ? { ref: ps[i].ref, name: ps[i].name } : null, quantity: 0, tags: 0, _id: id })), { _id: null, project: null, quantity: 0, tags: 0 }];
+    used.forEach((a) => { const x = allocations.find((y) => y._id === (a.projectId || null)); x.quantity += a.quantity || 1; x.tags += 1; });
+    res.json({ item: { ...item, low: isLow(item), allocations: allocations.filter((x) => x.tags).map(({ _id, ...x }) => x) } });
   }));
 
   router.patch('/inventory/:id', requireUser('inventory.manage'), wrap(async (req, res) => {
@@ -545,7 +571,8 @@ async function excelOf(docs, { by, category }) {
     { header: 'Type', key: 'type', width: 16 },
     { header: 'Make', key: 'make', width: 16 },
     { header: 'Model', key: 'model', width: 16 },
-    { header: 'Payload (kg)', key: 'payloadKg', width: 12, only: 'robot' },
+    { header: 'Payload (kg)', key: 'payloadKg', width: 12, only: 'payload' },
+    { header: 'Tags', key: 'trackingLabel', width: 11 },
     { header: 'Specs', key: 'specs', width: 28 },
     { header: 'Quantity', key: 'quantity', width: 10 },
     { header: 'Unit', key: 'unit', width: 8 },
@@ -562,9 +589,9 @@ async function excelOf(docs, { by, category }) {
   ];
   for (const g of groups) {
     const ws = wb.addWorksheet(g.label, { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] });
-    ws.columns = cols.filter((c) => !c.only || c.only === g.key).map(({ only, ...c }) => c);
+    ws.columns = cols.filter((c) => !c.only || g.docs.some((d) => d.payloadKg != null)).map(({ only, ...c }) => c);
     g.docs.forEach((d) => {
-      const r = ws.addRow({ ...d, conditionLabel: CONDITIONS[d.condition] || '', updated: fmtDate(d.updatedAt) });
+      const r = ws.addRow({ ...d, conditionLabel: CONDITIONS[d.condition] || '', trackingLabel: d.tracking === 'lot' ? 'Per lot' : 'Per piece', updated: fmtDate(d.updatedAt) });
       r.alignment = { vertical: 'top', wrapText: true };
       r.eachCell({ includeEmpty: true }, (c) => { c.border = { bottom: thin }; c.font = { color: { argb: 'FF2A3240' } }; });
       if (d.low) r.getCell('quantity').font = { bold: true, color: { argb: 'FFB0563F' } };
@@ -608,10 +635,10 @@ function pdfOf(docs, { by, category, q }) {
     for (const g of groups) {
       const qty = g.docs.reduce((a, d) => a + d.quantity, 0);
       const low = g.docs.filter((d) => d.low).length;
-      doc.roundedRect(x, y0, 180, 46, 6).fillAndStroke('#f5f7fa', LINE);
+      doc.roundedRect(x, y0, Math.min(180, (width - 12 * (groups.length - 1)) / Math.max(groups.length, 1)), 46, 6).fillAndStroke('#f5f7fa', LINE);
       doc.fillColor(INK_3).font('Helvetica').fontSize(8).text(g.label.toUpperCase(), x + 12, y0 + 9, { characterSpacing: 0.6 });
       doc.fillColor(INK).font('Helvetica-Bold').fontSize(13).text(`${qty}`, x + 12, y0 + 22, { continued: true }).font('Helvetica').fontSize(9).fillColor(INK_2).text(`  in ${g.docs.length} items${low ? ` · ${low} low` : ''}`);
-      x += 192;
+      x += Math.min(180, (width - 12 * (groups.length - 1)) / Math.max(groups.length, 1)) + 12;
     }
     doc.y = y0 + 64;
 
@@ -683,4 +710,21 @@ function pdfOf(docs, { by, category, q }) {
   });
 }
 
-module.exports = { createInventory, normaliseItem, parseCsv, csvToObjects, categoryOf, CATEGORIES, CONDITIONS, COLUMNS };
+/**
+ * 1.11: three groups became five. panel → electrical; robot → mechanical, except controllers and pendants
+ * (electrical). Refs never change (PNL-3 stays PNL-3), so tags printed earlier still find the item.
+ * New items of each group continue from their own counter. Runs on every start; does nothing the second time.
+ */
+async function migrateInventory(db, log = console) {
+  const items = db.collection('inventory_items');
+  const old = await items.find({ category: { $in: Object.keys(LEGACY) } }).toArray();
+  for (const d of old) {
+    const category = d.category === 'robot' && ELECTRICAL_TYPES.has(key(d.type)) ? 'electrical' : LEGACY[d.category];
+    await items.updateOne({ _id: d._id }, { $set: { category, legacyCategory: d.category, tracking: d.tracking || CATEGORIES[category].tracking } });
+  }
+  const untracked = (await items.find({}, { projection: { _id: 1, category: 1, tracking: 1 } }).toArray()).filter((d) => !d.tracking);
+  for (const d of untracked) if (CATEGORIES[d.category]) await items.updateOne({ _id: d._id }, { $set: { tracking: CATEGORIES[d.category].tracking } });
+  if (old.length) log.log(`[HUB] inventory: moved ${old.length} items from the old panel / robot groups to the new groups`);
+}
+
+module.exports = { migrateInventory, createInventory, normaliseItem, parseCsv, csvToObjects, categoryOf, CATEGORIES, CONDITIONS, COLUMNS };

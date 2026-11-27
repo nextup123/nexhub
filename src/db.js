@@ -21,7 +21,8 @@ const M = require('./models');
  *   projects             customer installations: robots, team, details
  *   clients              the companies projects are for, with their contacts
  *   project_entries      a project's record: problems and solutions, site visits, notes
- *   inventory_items      what the company owns: IT gadgets, panel items, robot items (src/inventory.js)
+ *   inventory_items      stock lines: what the store holds, by group (src/inventory.js)
+ *   assets               every tagged thing (NX-000123-K) and where it is: project › assembly › part (src/assets.js)
  */
 
 // MongoDB-side validation, so documents written by other tools (scripts,
@@ -125,7 +126,12 @@ const VALIDATORS = {
   inventory_items: {
     bsonType: 'object',
     required: ['_id', 'ref', 'category', 'name', 'quantity'],
-    properties: { category: { enum: ['it', 'panel', 'robot'] }, name: { bsonType: 'string' }, quantity: { bsonType: ['int', 'long', 'double'], minimum: 0 }, condition: { enum: ['new', 'working', 'needs_repair', 'faulty', 'scrapped'] } },
+    properties: { category: { enum: ['it', 'electrical', 'raw_material', 'mechanical', 'machinery', 'panel', 'robot'] }, tracking: { enum: ['unit', 'lot'] }, name: { bsonType: 'string' }, quantity: { bsonType: ['int', 'long', 'double'], minimum: 0 }, condition: { enum: ['new', 'working', 'needs_repair', 'faulty', 'scrapped'] } },
+  },
+  assets: {
+    bsonType: 'object',
+    required: ['_id', 'tag', 'seq', 'kind', 'name', 'status'],
+    properties: { tag: { bsonType: 'string', pattern: '^NX-\\d{6,7}-[A-Z]$' }, kind: { enum: ['assembly', 'unit', 'lot'] }, status: { enum: ['active', 'faulty', 'returned', 'scrapped'] }, projectId: { bsonType: ['string', 'null'] }, parentId: { bsonType: ['string', 'null'] } },
   },
   project_entries: {
     bsonType: 'object',
@@ -176,6 +182,7 @@ const INDEXES = {
   projects: [[{ ref: 1 }, { unique: true }], [{ status: 1, updatedAt: -1 }, {}], [{ clientId: 1 }, {}]],
   clients: [[{ ref: 1 }, { unique: true }], [{ nameKey: 1 }, { unique: true }]],
   inventory_items: [[{ ref: 1 }, { unique: true }], [{ category: 1, nameKey: 1 }, {}], [{ updatedAt: -1 }, {}]],
+  assets: [[{ tag: 1 }, { unique: true }], [{ seq: 1 }, { unique: true }], [{ projectId: 1, status: 1 }, {}], [{ parentId: 1 }, {}], [{ itemId: 1 }, {}]],
   project_entries: [[{ projectId: 1, createdAt: -1 }, {}], [{ kind: 1, status: 1 }, {}], [{ kind: 1, date: 1 }, {}]],
 };
 

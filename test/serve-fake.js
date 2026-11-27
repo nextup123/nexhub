@@ -23,5 +23,8 @@ const { createFakeDb } = require('./fakeDb');
   const app = createApp({ db, config: cfg });
   await app.locals.migrate();
   await app.locals.ensureSuperuser();
-  app.listen(config.PORT, '127.0.0.1', () => console.log(`[HUB] in-memory hub on ${config.PORT}, ${process.env.SEED ? 'sample company, password nextup-demo' : `setup key ${cfg.SETUP_KEY === 'dev-key' ? 'dev-key' : '(from SETUP_KEY)'}`}`));
+  app.listen(config.PORT, '127.0.0.1', async () => {
+    if (process.env.SEED) await require('./seedAssets').seedAssets(`http://127.0.0.1:${config.PORT}/api/v1`).catch((e) => console.warn('[HUB] sample assets:', e.message));
+    console.log(`[HUB] in-memory hub on ${config.PORT}, ${process.env.SEED ? 'sample company, password nextup-demo' : `setup key ${cfg.SETUP_KEY === 'dev-key' ? 'dev-key' : '(from SETUP_KEY)'}`}`);
+  });
 })();

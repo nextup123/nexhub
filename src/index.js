@@ -12,7 +12,7 @@ const { createCache } = require('./cache');
 // The API itself answers 503 until MongoDB is connected; connecting is retried.
 // What this server can do, so the tool and the app can tell an older server apart.
 const VERSION = require('../package.json').version;
-const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects', 'cache', 'live', 'alerts', 'clients', 'equipment', 'software', 'import', 'inventory'];
+const FEATURES = ['pictures', 'contact', 'accounts', 'hr', 'production', 'projects', 'cache', 'live', 'alerts', 'clients', 'equipment', 'software', 'import', 'inventory', 'assets'];
 const cache = createCache({ url: config.REDIS_URL, ttl: config.CACHE_TTL });
 if (!config.REDIS_URL) console.log('[HUB] REDIS_URL is not set: no cache, MongoDB answers every request.');
 const state = { db: 'connecting', error: '', since: new Date().toISOString(), attempts: 0 };

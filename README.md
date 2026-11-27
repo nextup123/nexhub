@@ -80,7 +80,7 @@ Everything else (people, attendance, leave, production, enquiries) needs a signe
    A service made from an older version may still have `MONGO_DB`, `COMPANY_TZ`, `IP_SALT` or `CONTACT_ORIGINS`:
    they keep working, and can be deleted if they hold the default.
 3. Open `https://<your-service>.onrender.com/api/v1/health`.
-   `{"ok":true,"version":"1.10.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
+   `{"ok":true,"version":"1.11.0","features":[…],"db":"connected","cache":"redis connected"}` means it works.
    No `version` in that answer means Render still runs a copy from before pictures: deploy this version again.
 4. On each robot PC: Software update → Update settings → Report server address
    `https://<your-service>.onrender.com`. In the mobile app: the same address.
@@ -190,7 +190,7 @@ PORT=4060 node test/serve-fake.js
 
 runs it on an in-memory stand-in (data is lost when it stops). `npm test` runs the API tests on
 the same stand-in, with the cache on (`TEST_CACHE=off` without it, `TEST_REDIS_URL=redis://127.0.0.1:6379` against a real Redis). Add `SEED=1` for a sample company: 12 people, 6 projects for 5 clients with equipment, site visits and solved problems, robots in the build, attendance,
-leave, holidays, events, bug reports, 24 website enquiries and 20 inventory items. Everyone's password is `nextup-demo`:
+leave, holidays, events, bug reports, 24 website enquiries, 26 inventory items and a tagged tree for the welding cell (PRJ-2). Everyone's password is `nextup-demo`:
 
 | Sign in as | Role |
 |---|---|
@@ -268,6 +268,8 @@ on a team or given a build stage, and the dashboard cannot change, reset or swit
 | Inventory: see every group, search, export PDF and Excel | ✓ | ✓ | ✓ | ✓ |
 | Inventory: add, edit, stock in/out, CSV import | ✓ | ✓ | ✓ | |
 | Inventory: delete items | ✓ | | | |
+| Assets: see and build project trees, take parts from stock, return, move, labels | ✓ | | ✓ | ✓ |
+| Assets: delete a tag made by mistake | ✓ | | | |
 
 (Inventory rows apply with `INVENTORY_OPEN=false`; while it is on, the inventory needs no sign-in.)
 
@@ -339,21 +341,66 @@ People get a temporary password, shown once (download them as CSV and give each 
 their own at first sign-in. Import in this order: people, clients, projects, robots, equipment, problems.
 Up to 3000 rows at a time. API: `GET /import/templates`, `POST /import/:kind {rows, dryRun}`.
 
-### Inventory (1.10)
+### Assets: a tag on every part (1.11)
+
+Every physical thing that goes into a project gets its own **tag**, `NX-000123-K`: six digits that
+never repeat, and a check letter that catches a mistyped digit. A tag can be typed with or without dashes,
+in any case, or scanned from its printed QR label. Assets form a tree under a project:
+
+```
+PRJ-4 Welding cell
+├─ Main control panel   NX-000101-H   assembly
+│  ├─ Servo drive       NX-000102-K   one piece, S/N D23B0711, from stock EE-2
+│  └─ M4 screws ×40     NX-000110-B   one lot, from stock MEC-3
+└─ Robot arm            NX-000120-C   assembly
+   └─ Joint J1          NX-000121-E   assembly
+      ├─ Servo motor    NX-000122-G
+      └─ M6 bolts ×12   NX-000123-J
+```
+
+- **Assembly**: holds other assets (panel, robot arm, computer, joint…), any depth.
+- **Single piece**: one thing, one tag (a drive, a relay, a CPU), with its maker's serial number.
+- **Lot**: a counted batch under one tag (nuts, bolts, cable, bar stock).
+
+Parts are **taken from the store**: the inventory's stock line goes down by the number taken and the
+parts get tags (one per piece, or one for the lot: each stock line has a default, `tracking`). **Return**
+puts the number back into the stock line and retires the tag (kept, with its history). So the store count
+is what has no tag yet, and every tagged thing is in a project or registered in the store. Things that
+are not in the store (a machine, a tool, a PC bought for the project) can be registered on their own.
+Moving an assembly moves everything inside it. Every change is in the asset's history.
+
+| | |
+|---|---|
+| `GET /assets?q=&projectId=none\|<id>&kind=&status=` | search: tag, name, serial, make, model, stock ref |
+| `GET /assets/tag/:tag` | find by tag (says when the check letter does not match) |
+| `GET /assets/:id` | the asset, the path above it, what is inside, history |
+| `GET /projects/:id/assets` | a project's whole tree (flat, with `parentId`) and totals |
+| `GET /projects/:id/assets/export.xlsx` | bill of materials: the tree, and totals per part |
+| `GET /assets/labels.pdf?projectId=` or `?ids=a,b` | A4 sheet of 3 × 8 QR labels |
+| `POST /assets` | `{kind, name, projectId \| parentId, assemblyType, …}` or `{parentId, fromStock: {itemId, quantity, mode: unit\|lot, serials}}` |
+| `PATCH /assets/:id` · `POST /assets/:id/move {projectId \| parentId}` · `POST /assets/:id/return {quantity}` | |
+| `DELETE /assets/:id` | a tag made by mistake: removed, stock put back (founder) |
+
+Who: founders, leads and employees see and build the trees (every change is logged with their name);
+only founders delete. HR does not see projects, so not assets either. Collection `assets`, counter `asset`.
+New dependency: `qrcode`.
+
+### Inventory (1.10, five groups since 1.11)
 
 The separate **Nextup inventory** app (`nextup-inventory`, its own package) keeps what the company
-owns in three groups: **IT gadgets** (CPUs, monitors, keyboards…), **panel items** (SMPS, drives, motors…)
-and **robot items** (20 kg payload robot 6 Nos, 5 kg payload robot 3 Nos, controllers, spares). It signs
+owns in five groups: **IT**, **Electrical & electronics**, **Raw material**, **Mechanical** (down to nuts and
+bolts) and **Machinery** (lathe, VMC…). 1.11 moves the old groups on start: panel → electrical, robot →
+mechanical (controllers and pendants → electrical); refs like `PNL-3` never change. It signs
 in with the same hub accounts. Every item has a name and a quantity, and optionally type, make, model,
 payload (robots), specs, unit, location, condition, minimum stock (low-stock warning), assigned to,
 serial numbers, supplier, purchase date, unit price and notes. Every quantity change is kept with who
-and why. Refs: `IT-n`, `PNL-n`, `RBT-n`. Collection `inventory_items`.
+and why. Refs: `IT-n`, `EE-n`, `RM-n`, `MEC-n`, `MCH-n`. Collection `inventory_items`.
 
 | | |
 |---|---|
 | `GET /inventory/meta` | groups, type suggestions, conditions, CSV columns |
 | `GET /inventory/summary` | per group: items, total quantity, low stock, value |
-| `GET /inventory?category=it\|panel\|robot&q=&type=&condition=&low=1&sort=` | the list |
+| `GET /inventory?category=it\|electrical\|raw_material\|mechanical\|machinery&q=&type=&condition=&low=1&sort=` | the list |
 | `POST /inventory` · `GET/PATCH/DELETE /inventory/:id` | one item (`:id` or its ref) |
 | `POST /inventory/:id/adjust {delta, note}` | stock in (+) or out (−) |
 | `POST /inventory/bulk-delete {ids}` | several at once |

@@ -14,13 +14,14 @@ const { createHr } = require('./hr');
 const { createProduction } = require('./production');
 const { createProjects, migrateClients } = require('./projects');
 const { createImporter, importRoutes } = require('./importer');
-const { createInventory } = require('./inventory');
+const { createInventory, migrateInventory } = require('./inventory');
+const { createAssets } = require('./assets');
 const { can, isTop, ROLES, ROLE_LABELS } = require('./permissions');
 
 const toInt = (v, fallback, max) => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 0 ? Math.min(n, max ?? n) : fallback;
-}; 
+};
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // No sign-in yet (keys come later). Who made a change is whatever name the caller gives:
 // the mobile app sends X-User-Name, release scripts send publishedBy.
@@ -32,7 +33,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const PUBLIC_BUG_FIELDS = { _id: 0, number: 1, title: 1, status: 1, fixedInVersion: 1, clientReportId: 1, createdAt: 1, updatedAt: 1 };
 
 // Answers that are never cached: time-sensitive, not JSON, or already cheap.
-const NO_CACHE = [/^\/stream$/, /^\/notifications\//, /^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/inventory\/(export\.(xlsx|pdf)|template\.csv)$/, /^\/attachments\//];
+const NO_CACHE = [/^\/stream$/, /^\/notifications\//, /^\/health$/, /^\/auth\/me$/, /^\/attendance\/today/, /^\/contact-submissions\/export\.csv$/, /^\/inventory\/(export\.(xlsx|pdf)|template\.csv)$/, /^\/assets\/labels\.pdf$/, /^\/projects\/[^/]+\/assets\/export\.xlsx$/, /^\/attachments\//];
 // Bug reports, releases and machines: the robots write these often, so they have their own generation.
 const ROBOT_AREA = /^\/(apps|bugs|attachments)(\/|$)/;
 
@@ -438,6 +439,7 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   const importer = createImporter({ db, projectsSvc: projectsApi.svc, productionSvc: production.svc });
   api.use(importRoutes({ requireUser: auth.requireUser, importer }));
   api.use(createInventory({ db, requireUser: auth.requireUser, open: !!config.INVENTORY_OPEN }).router);
+  api.use(createAssets({ db, requireUser: auth.requireUser }).router);
   api.use(createContactRoutes({ db, config, requireUser: auth.requireUser, notifier }));
 
   // ── Live updates for the dashboard ──────────────────────────
@@ -544,7 +546,7 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   // Run once at start: creates, updates or switches off the hidden super user (see auth.js).
   app.locals.ensureSuperuser = auth.ensureSuperuser;
   // Run once at start, before the super user: brings data from older versions up to date.
-  app.locals.migrate = async (log = console) => { await migrateClients(db, log); if (cache.enabled) await cache.bumpAll(); };
+  app.locals.migrate = async (log = console) => { await migrateClients(db, log); await migrateInventory(db, log); if (cache.enabled) await cache.bumpAll(); };
   app.locals.cache = cache;
   app.locals.live = live;
   return app;

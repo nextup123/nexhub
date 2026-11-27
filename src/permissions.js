@@ -58,6 +58,10 @@ const PERMISSIONS = {
   'inventory.view': ALL,                              // see every group, search, export PDF / Excel
   'inventory.manage': ['founder', 'hr', 'lead'],      // add, edit, stock in/out, CSV import
   'inventory.delete': ['founder'],
+  // assets: every part with its own tag, in a tree under a project (panel › relays, robot arm › bolts)
+  'assets.view': ['founder', 'lead', 'employee'],
+  'assets.manage': ['founder', 'lead', 'employee'],   // register, take parts from stock, move, return, print labels
+  'assets.delete': ['founder'],                       // remove a tag made by mistake
   // website enquiries (customer contact details)
   'enquiries.view': ['founder', 'lead'],
   'enquiries.edit': ['founder', 'lead'],
