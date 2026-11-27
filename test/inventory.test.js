@@ -124,8 +124,27 @@ test('inventory: PDF and Excel exports', async () => {
   await wb.xlsx.load(xbuf);
   assert.deepStrictEqual(wb.worksheets.map((w) => w.name), ['Summary', 'Panel items']);
   assert.strictEqual(wb.getWorksheet('Panel items').rowCount, 1 + 20 + 1);
-  // Signed out: no export.
-  assert.strictEqual((await fetch(`${hub.base}/inventory/export.pdf`)).status, 401);
+});
+
+test('inventory: INVENTORY_OPEN lets the app work without sign-in; off, it needs a login', async () => {
+  const open = await startHub({ INVENTORY_OPEN: true });
+  const add = await open.call('POST', '/inventory', { category: 'robot', name: '20 kg payload robot', quantity: 6 });
+  assert.strictEqual(add.status, 201);
+  assert.strictEqual(add.body.item.createdBy, 'Inventory app');
+  assert.strictEqual((await open.call('POST', `/inventory/${add.body.item._id}/adjust`, { delta: -1 })).body.item.quantity, 5);
+  assert.strictEqual((await open.call('GET', '/inventory')).body.total, 1);
+  assert.strictEqual((await fetch(`${open.base}/inventory/export.pdf`)).status, 200);
+  assert.strictEqual((await open.call('DELETE', `/inventory/${add.body.item._id}`)).status, 200);
+  // Only the inventory is open.
+  assert.strictEqual((await open.call('GET', '/users')).status, 401);
+  // A signed-in employee is still held to their role.
+  const founder = await open.founder();
+  const emp = await open.person(founder, { name: 'Ravi', email: 'ravi@nextup.test', role: 'employee' });
+  assert.strictEqual((await open.call('POST', '/inventory', { category: 'it', name: 'X', quantity: 1 }, { token: emp.token })).status, 403);
+
+  const closed = await startHub({ INVENTORY_OPEN: false });
+  assert.strictEqual((await closed.call('GET', '/inventory')).status, 401);
+  assert.strictEqual((await fetch(`${closed.base}/inventory/export.pdf`)).status, 401);
 });
 
 test('inventory: CSV parser', () => {

@@ -31,6 +31,9 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      # The inventory app works without sign-in; set false to require hub logins again.
+      - key: INVENTORY_OPEN
+        value: "true"
       # The free plan sleeps after 15 minutes without visitors; this keeps it awake.
       - key: KEEP_AWAKE
         value: true

@@ -46,6 +46,9 @@ module.exports = {
   // to anyone signed in. On: the maintainer routes need a signed-in user, and the release script
   // sends RELEASE_TOKEN. Routes the robots call (report a bug, heartbeat, update records, read
   // published releases, a machine's own bugs) are never locked.
+  // The inventory app without sign-in: on unless INVENTORY_OPEN=false. Anyone with the hub's address can then
+  // read and change the inventory (only the inventory; everything else still needs a login).
+  INVENTORY_OPEN: !/^(0|false|no|off)$/i.test(process.env.INVENTORY_OPEN || ''),
   LOCK_BUG_ROUTES: /^(1|true|yes)$/i.test(process.env.LOCK_BUG_ROUTES || ''),
   RELEASE_TOKEN: (process.env.RELEASE_TOKEN || '').trim(),
 

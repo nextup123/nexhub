@@ -269,6 +269,8 @@ on a team or given a build stage, and the dashboard cannot change, reset or swit
 | Inventory: add, edit, stock in/out, CSV import | ✓ | ✓ | ✓ | |
 | Inventory: delete items | ✓ | | | |
 
+(Inventory rows apply with `INVENTORY_OPEN=false`; while it is on, the inventory needs no sign-in.)
+
 The reasoning: customer contact details (enquiries, bug reporters) stay with founders and leads, and a
 project's site contact also with its team, who need it on site. Every engineer can read every project,
 so a problem solved at one site helps at the next;
@@ -362,6 +364,12 @@ and why. Refs: `IT-n`, `PNL-n`, `RBT-n`. Collection `inventory_items`.
 CSV headers are matched loosely (*Item*, *Qty*, *Nos*, *Brand*, *Model no*, *Remarks*…); comma,
 semicolon or tab separated; dates `2026-11-27`, `27/11/2026` or `27 Nov 2026`. Up to 5000 rows.
 New dependencies: `exceljs` and `pdfkit` (Render installs them on deploy).
+
+**`INVENTORY_OPEN`** (default `true`): the inventory routes answer without sign-in, so the inventory
+app needs no login. Anyone who knows this server's address can then read and change the inventory
+(nothing else: every other route still needs a login). A signed-in person is still held to their role.
+Changes without sign-in are recorded as "Inventory app". Set `INVENTORY_OPEN=false` to require hub
+logins again (and `VITE_REQUIRE_LOGIN=true` in the inventory app).
 
 ### Production
 

@@ -437,7 +437,7 @@ function createApp({ db, config = defaultConfig, cache = createCache(), live = c
   productionHooks.logToProject = projectsApi.svc.logToProject;
   const importer = createImporter({ db, projectsSvc: projectsApi.svc, productionSvc: production.svc });
   api.use(importRoutes({ requireUser: auth.requireUser, importer }));
-  api.use(createInventory({ db, requireUser: auth.requireUser }).router);
+  api.use(createInventory({ db, requireUser: auth.requireUser, open: !!config.INVENTORY_OPEN }).router);
   api.use(createContactRoutes({ db, config, requireUser: auth.requireUser, notifier }));
 
   // ── Live updates for the dashboard ──────────────────────────

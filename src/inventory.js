@@ -231,11 +231,17 @@ const csvCell = (v) => {
 };
 
 // ── Router ──────────────────────────────────────────────────
-function createInventory({ db, requireUser }) {
+function createInventory({ db, requireUser: requireLogin, open = false }) {
+  // INVENTORY_OPEN: nobody signed in may still use the inventory (as "Inventory app"). Someone signed in
+  // is checked against their role as usual. Turn it off with INVENTORY_OPEN=false on Render.
+  const requireUser = (perm) => (req, res, next) => {
+    if (open && !req.user) { res.set('Cache-Control', 'no-store'); return next(); }
+    return requireLogin(perm)(req, res, next);
+  };
   const items = db.collection('inventory_items');
   const counters = db.collection('counters');
   const router = express.Router();
-  const who = (req) => (req.user && req.user.name) || 'hub';
+  const who = (req) => (req.user && req.user.name) || str(req.get('x-user-name'), 60) || 'Inventory app';
 
   async function nextRef(category) {
     const r = await counters.findOneAndUpdate({ _id: `inventory_${category}` }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' });
