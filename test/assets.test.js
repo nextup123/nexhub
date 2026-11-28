@@ -129,3 +129,48 @@ test('inventory migration: panel → electrical, robot → mechanical (controlle
   const all = await items.find({}).toArray();
   assert.deepStrictEqual(all.map((d) => [d.ref, d.category, d.tracking]), [['PNL-1', 'electrical', 'unit'], ['RBT-1', 'mechanical', 'lot'], ['RBT-2', 'electrical', 'unit']]);
 });
+
+test('assign to project: many store items at once, all or nothing, history kept; open for the inventory app', async () => {
+  const hub = await startHub({ INVENTORY_OPEN: true });
+  const founder = await hub.founder();
+  const hr = await hub.person(founder, { name: 'Meena', email: 'meena@nextup.test', role: 'hr', team: 'People' });
+  const prj = (await hub.call('POST', '/projects', { name: 'Welding cell' }, { token: founder })).body.project;
+  const add = async (category, name, quantity) => (await hub.call('POST', '/inventory', { category, name, quantity })).body.item;
+  const cpu = await add('it', 'CPU i5', 4);
+  const mouse = await add('it', 'Mouse', 10);
+  const drive = await add('electrical', 'Servo drive', 6);
+  const bolts = await add('mechanical', 'M6 bolt', 200);
+
+  // The inventory app (no login) sees the projects.
+  const ps = await hub.call('GET', '/inventory/projects');
+  assert.deepStrictEqual(ps.body.projects.map((p) => p.ref), [prj.ref]);
+
+  // Too many of one: nothing moves.
+  const bad = await hub.call('POST', '/assets/assign', { projectId: prj._id, items: [{ itemId: cpu._id, quantity: 1 }, { itemId: drive._id, quantity: 7 }] });
+  assert.strictEqual(bad.status, 400);
+  assert.match(bad.body.error, /Only 6/);
+  assert.strictEqual((await hub.call('GET', `/inventory/${cpu._id}`)).body.item.quantity, 4);
+
+  // Everything at once, into a new "Computer" assembly.
+  const ok = await hub.call('POST', '/assets/assign', {
+    projectId: prj._id, assembly: { name: 'Computer', assemblyType: 'Computer' },
+    items: [{ itemId: cpu._id, quantity: 1 }, { itemId: mouse._id, quantity: 1 }, { itemId: drive._id, quantity: 2 }, { itemId: bolts._id, quantity: 24 }],
+  }, { headers: { 'X-User-Name': 'Ravi' } });
+  assert.strictEqual(ok.status, 201);
+  assert.strictEqual(ok.body.items, 4);
+  assert.strictEqual(ok.body.pieces, 28);
+  assert.deepStrictEqual(ok.body.assets.map((a) => a.kind), ['assembly', 'unit', 'unit', 'unit', 'unit', 'lot']);
+  assert.ok(ok.body.assets.slice(1).every((a) => a.parentId === ok.body.assets[0]._id));
+  assert.match(ok.body.assets[1].history[0].note, /Moved from the store \(IT-1\) to PRJ-\d+ › Computer NX-/);
+  assert.strictEqual(ok.body.assets[1].createdBy, 'Ravi');
+  const cpuNow = (await hub.call('GET', `/inventory/${cpu._id}`)).body.item;
+  assert.strictEqual(cpuNow.quantity, 3);
+  assert.match(cpuNow.history.at(-1).note, /To PRJ-\d+ › Computer/);
+  // The list shows what is out in projects.
+  const list = (await hub.call('GET', '/inventory')).body.items;
+  assert.deepStrictEqual(Object.fromEntries(list.map((i) => [i.name, [i.quantity, i.inProjects]])), { 'CPU i5': [3, 1], 'M6 bolt': [176, 24], Mouse: [9, 1], 'Servo drive': [4, 2] });
+  // The assembly now shows up for the next assignment.
+  assert.deepStrictEqual((await hub.call('GET', '/inventory/projects')).body.projects[0].assemblies.map((a) => a.name), ['Computer']);
+  // A signed-in HR person is still held to their role (no asset access).
+  assert.strictEqual((await hub.call('POST', '/assets/assign', { projectId: prj._id, items: [{ itemId: mouse._id, quantity: 1 }] }, { token: hr.token })).status, 403);
+});

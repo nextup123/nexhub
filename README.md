@@ -508,3 +508,13 @@ git tag v3.5.1 && git push origin main v3.5.1
 The `Release` GitHub Action builds it and sends `release-notes.json` to this server
 (repository secret `HUB_URL`). Bugs named in `changes[].bugs` are marked fixed.
 To send the notes by hand: `HUB_URL=… node scripts/publish-release.js`.
+
+## Assign to a project (1.12)
+
+`POST /assets/assign` moves many store items into a project at once (a CPU, a mouse, a monitor, 2 servo drives, 24 bolts…):
+`{ projectId, parentId?, assembly?: { name, assemblyType }, items: [{ itemId, quantity, mode?, serials? }] }`.
+Everything is checked first, so either all of it moves or nothing does. Each piece gets its tag(s) under the project, or under an
+existing or new component. The stock line's history says "To PRJ-4 › Computer…", and each tag's history says "Moved from the store (IT-1) to PRJ-4 › …".
+`GET /inventory/projects` lists projects with their components for the picker. With `INVENTORY_OPEN` both work without
+a login (recorded as "Inventory app", or the `X-User-Name` header). A signed-in user needs `assets.manage`.
+`GET /inventory` now also returns `inProjects` per item: how many are out in projects with tags.

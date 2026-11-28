@@ -289,7 +289,11 @@ function createInventory({ db, requireUser: requireLogin, open = false }) {
     let docs = await items.find(listFilter(q), { projection: { history: 0, searchText: 0, nameKey: 0 } }).limit(20000).toArray();
     if (q.low === '1' || q.low === 'true') docs = docs.filter(isLow);
     docs.sort(SORTS[q.sort] || SORTS.name);
-    return docs.map((d) => ({ ...d, low: isLow(d) }));
+    // How many of each are out in projects (tagged), so the store count and the project count sit side by side.
+    const out = new Map();
+    const tagged = await db.collection('assets').find({ status: { $in: ['active', 'faulty'] }, projectId: { $ne: null } }, { projection: { itemId: 1, quantity: 1, kind: 1 } }).toArray();
+    tagged.forEach((a) => { if (a.itemId && a.kind !== 'assembly') out.set(a.itemId, (out.get(a.itemId) || 0) + (a.quantity || 1)); });
+    return docs.map((d) => ({ ...d, low: isLow(d), inProjects: out.get(d._id) || 0 }));
   }
 
   const PUBLIC = { searchText: 0, nameKey: 0 };

@@ -34,6 +34,10 @@
  *                                                 unit, make, model, serial, location, notes,
  *                                                 fromStock: { itemId, quantity, mode: unit|lot, serials: [] } }
  *   PATCH  /assets/:id                            details, status (active, faulty, scrapped)
+ *   GET    /inventory/projects                    projects with their assemblies (for "Assign to project")
+ *   POST   /assets/assign                         many store items into a project at once:
+ *                                                 { projectId, parentId?, assembly?: { name, assemblyType }, note?,
+ *                                                   items: [{ itemId, quantity, mode?, serials? }] }  all or nothing
  *   POST   /assets/:id/move                       { projectId, parentId }  (the whole branch moves with it)
  *   POST   /assets/:id/return                     { quantity }  back to the store (an assembly: everything in it)
  *   DELETE /assets/:id                            a mistake: removed for good, stock put back       (assets.delete)
@@ -68,13 +72,15 @@ function parseTag(text) {
   return { seq: Number(m[1]), check: m[2] };
 }
 
-function createAssets({ db, requireUser }) {
+function createAssets({ db, requireUser, open = false }) {
+  // With INVENTORY_OPEN, the inventory app may list projects and assign stock without a login.
+  const openUser = (perm) => (req, res, next) => (open && !req.user ? next() : requireUser(perm)(req, res, next));
   const assets = db.collection('assets');
   const items = db.collection('inventory_items');
   const projects = db.collection('projects');
   const counters = db.collection('counters');
   const router = express.Router();
-  const who = (req) => (req.user && req.user.name) || 'hub';
+  const who = (req) => (req.user && req.user.name) || str(req.get('x-user-name'), 60) || (open ? 'Inventory app' : 'hub');
 
   async function nextSeqs(n) {
     const r = await counters.findOneAndUpdate({ _id: 'asset' }, { $inc: { seq: n } }, { upsert: true, returnDocument: 'after' });
@@ -137,6 +143,104 @@ function createAssets({ db, requireUser }) {
     }
     return { parent, project, projectId: project ? project._id : null, parentId: parent ? parent._id : null };
   }
+
+  /** Check one line of a "take from stock" request against the store. */
+  function planFromStock(item, line) {
+    const n = Number(line.quantity);
+    if (!Number.isInteger(n) || n < 1) return { error: `${item.name}: how many? A whole number, 1 or more` };
+    if (n > item.quantity) return { error: `Only ${item.quantity} ${item.unit || 'pcs'} of ${item.name} in the store` };
+    const mode = line.mode === 'lot' || line.mode === 'unit' ? line.mode : (item.tracking || 'unit');
+    if (mode === 'unit' && n > MAX_UNITS) return { error: `${item.name}: up to ${MAX_UNITS} pieces with their own tags at a time; use one lot tag for more` };
+    const serials = Array.isArray(line.serials) ? line.serials.map((x) => str(x, 80)) : String(line.serials || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+    return { n, mode, serials };
+  }
+  /** Take parts out of the store and make their tags (not saved yet). Fails if someone took the last ones first. */
+  async function takeFromStock(item, { n, mode, serials }, base, placeNote, by, now) {
+    const common = { ...base, category: item.category, itemId: item._id, itemRef: item.ref, name: base.name || item.name, unit: item.unit || 'pcs', make: base.make || item.make || '', model: base.model || item.model || '' };
+    const seqs = await nextSeqs(mode === 'unit' ? n : 1);
+    const docs = mode === 'unit'
+      ? seqs.map((seq, i) => ({ ...common, seq, kind: 'unit', quantity: 1, serial: serials[i] || '' }))
+      : [{ ...common, seq: seqs[0], kind: 'lot', quantity: n, serial: '' }];
+    const took = await items.updateOne({ _id: item._id, quantity: { $gte: n } }, {
+      $inc: { quantity: -n },
+      $set: { updatedAt: now, updatedBy: by },
+      $push: { history: { at: now, by, change: -n, quantity: item.quantity - n, note: `To ${placeNote} (${mode === 'unit' ? `${n} tag${n === 1 ? '' : 's'}` : `lot ${tagOf(seqs[0])}`})` } },
+    });
+    if (took.matchedCount === 0) return { error: `${item.name}: not enough left in the store. Reload and try again.` };
+    return { docs };
+  }
+  async function saveNew(docs, by, now, placeNote) {
+    for (const d of docs) {
+      d._id = crypto.randomUUID();
+      d.tag = tagOf(d.seq);
+      d.history = [{ at: now, by, action: 'registered', note: d.itemRef ? `Moved from the store (${d.itemRef}) to ${placeNote}` : `Registered in ${placeNote}` }];
+      d.searchText = textOf(d);
+      await assets.insertOne(d);
+    }
+    return docs.map(strip);
+  }
+
+  // ── Assign to a project (many store items at once) ────────
+  // The inventory app uses these too, so with INVENTORY_OPEN they work without a login (as "Inventory app").
+  router.get('/inventory/projects', openUser('assets.view'), wrap(async (req, res) => {
+    const list = await projects.find({}, { projection: { _id: 1, ref: 1, name: 1, status: 1, clientName: 1, updatedAt: 1 } }).sort({ updatedAt: -1 }).limit(2000).toArray();
+    const asm = await assets.find({ kind: 'assembly', status: { $in: ['active', 'faulty'] } }, { projection: { _id: 1, seq: 1, tag: 1, name: 1, assemblyType: 1, projectId: 1, parentId: 1 } }).toArray();
+    const byProject = new Map();
+    asm.filter((a) => a.projectId).sort((a, b) => a.seq - b.seq).forEach((a) => { if (!byProject.has(a.projectId)) byProject.set(a.projectId, []); byProject.get(a.projectId).push({ _id: a._id, tag: a.tag, name: a.name, assemblyType: a.assemblyType, parentId: a.parentId }); });
+    res.json({ projects: list.map((p) => ({ _id: p._id, ref: p.ref, name: p.name, status: p.status, clientName: p.clientName || '', assemblies: byProject.get(p._id) || [] })) });
+  }));
+
+  router.post('/assets/assign', openUser('assets.manage'), wrap(async (req, res) => {
+    const b = req.body || {};
+    const lines = Array.isArray(b.items) ? b.items.filter((l) => l && l.itemId && Number(l.quantity) > 0) : [];
+    if (!lines.length) return res.status(400).json({ error: 'Pick at least one item and how many' });
+    if (lines.length > 300) return res.status(400).json({ error: 'Up to 300 items at a time' });
+    if (!b.projectId && !b.parentId) return res.status(400).json({ error: 'Which project?' });
+    const by = who(req);
+    const now = new Date();
+    // Check everything before anything leaves the store.
+    const plans = [];
+    const errors = [];
+    const want = new Map();
+    for (const l of lines) {
+      const item = await items.findOne({ _id: String(l.itemId) });
+      if (!item) { errors.push(`Item ${l.itemId} was not found`); continue; }
+      want.set(item._id, (want.get(item._id) || 0) + Number(l.quantity));
+      const plan = planFromStock(item, l);
+      if (plan.error) errors.push(plan.error);
+      else if (want.get(item._id) > item.quantity) errors.push(`Only ${item.quantity} ${item.unit || 'pcs'} of ${item.name} in the store`);
+      else plans.push({ item, plan });
+    }
+    if (errors.length) return res.status(400).json({ error: errors.join('. '), errors });
+    let place = await placeOf({ projectId: b.projectId, parentId: b.parentId });
+    if (place.error) return res.status(400).json({ error: place.error });
+    if (!place.project) return res.status(400).json({ error: 'Which project?' });
+    // Optionally a new assembly to hold them (a panel, a computer…).
+    const created = [];
+    const asmName = str(b.assembly && b.assembly.name, 120);
+    if (asmName) {
+      const [seq] = await nextSeqs(1);
+      const pn = [place.project.ref, place.parent ? `${place.parent.name} ${place.parent.tag}` : ''].filter(Boolean).join(' › ');
+      const doc = { seq, kind: 'assembly', name: asmName, assemblyType: str(b.assembly.assemblyType, 40) || 'Other', quantity: 1, unit: 'pcs', serial: '', category: '', itemId: null, itemRef: '', projectId: place.projectId, parentId: place.parentId, status: 'active', make: '', model: '', location: '', notes: '', createdBy: by, createdAt: now, updatedBy: by, updatedAt: now };
+      created.push(...await saveNew([doc], by, now, pn));
+      place = { ...place, parent: { _id: doc._id, name: doc.name, tag: doc.tag }, parentId: doc._id };
+    }
+    const placeNote = [place.project.ref, place.parent ? `${place.parent.name} ${place.parent.tag}` : ''].filter(Boolean).join(' › ');
+    const base = { projectId: place.projectId, parentId: place.parentId, status: 'active', make: '', model: '', location: '', notes: str(b.note, 2000), name: '', createdBy: by, createdAt: now, updatedBy: by, updatedAt: now };
+    const done = [];
+    for (const { item, plan } of plans) {
+      const r = await takeFromStock(item, plan, base, placeNote, by, now);
+      if (r.error) {
+        // Someone took the last ones in the meantime: put back what this request already took.
+        for (const d of done) await giveBack(d, d.quantity || 1, by, now, 'a cancelled assignment');
+        if (done.length) await assets.deleteMany({ _id: { $in: done.map((d) => d._id) } });
+        if (created.length) await assets.deleteMany({ _id: { $in: created.map((d) => d._id) } });
+        return res.status(409).json({ error: r.error });
+      }
+      done.push(...await saveNew(r.docs, by, now, placeNote));
+    }
+    res.status(201).json({ project: place.project, parent: place.parent || null, assets: [...created, ...done], items: plans.length, pieces: plans.reduce((a, p) => a + p.plan.n, 0) });
+  }));
 
   // ── Read ──────────────────────────────────────────────────
   router.get('/assets', requireUser('assets.view'), wrap(async (req, res) => {
@@ -240,25 +344,11 @@ function createAssets({ db, requireUser }) {
     if (b.fromStock && b.fromStock.itemId) {
       const item = await items.findOne({ _id: String(b.fromStock.itemId) });
       if (!item) return res.status(404).json({ error: 'Stock item not found' });
-      const n = Number(b.fromStock.quantity);
-      if (!Number.isInteger(n) || n < 1) return res.status(400).json({ error: 'How many: a whole number, 1 or more' });
-      if (n > item.quantity) return res.status(400).json({ error: `Only ${item.quantity} ${item.unit || 'pcs'} of ${item.name} in the store` });
-      const mode = b.fromStock.mode === 'lot' || b.fromStock.mode === 'unit' ? b.fromStock.mode : (item.tracking || 'unit');
-      if (mode === 'unit' && n > MAX_UNITS) return res.status(400).json({ error: `Up to ${MAX_UNITS} pieces with their own tags at a time; use one lot tag for more` });
-      const serials = Array.isArray(b.fromStock.serials) ? b.fromStock.serials.map((s) => str(s, 80)) : String(b.fromStock.serials || '').split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-      const common = { ...base, category: item.category, itemId: item._id, itemRef: item.ref, name: str(b.name, 120) || item.name, unit: item.unit || 'pcs', make: base.make || item.make || '', model: base.model || item.model || '' };
-      const seqs = await nextSeqs(mode === 'unit' ? n : 1);
-      docs = mode === 'unit'
-        ? seqs.map((seq, i) => ({ ...common, kind: 'unit', quantity: 1, serial: serials[i] || '' }))
-        : [{ ...common, kind: 'lot', quantity: n, serial: '' }];
-      docs.forEach((d, i) => { d.seq = seqs[i]; });
-      // Take them out of the store first: if two people take the last ones at once, only one gets them.
-      const took = await items.updateOne({ _id: item._id, quantity: { $gte: n } }, {
-        $inc: { quantity: -n },
-        $set: { updatedAt: now, updatedBy: by },
-        $push: { history: { at: now, by, change: -n, quantity: item.quantity - n, note: `To ${placeNote} (${mode === 'unit' ? `${n} tags` : `lot ${tagOf(seqs[0])}`})` } },
-      });
-      if (took.matchedCount === 0) return res.status(409).json({ error: `${item.name}: not enough left in the store. Reload and try again.` });
+      const plan = planFromStock(item, b.fromStock);
+      if (plan.error) return res.status(400).json({ error: plan.error });
+      const r = await takeFromStock(item, plan, { ...base, name: str(b.name, 120) }, placeNote, by, now);
+      if (r.error) return res.status(409).json({ error: r.error });
+      docs = r.docs;
     } else {
       const kind = KINDS[b.kind] ? b.kind : 'unit';
       const name = str(b.name, 120);
@@ -274,14 +364,7 @@ function createAssets({ db, requireUser }) {
         assemblyType: kind === 'assembly' ? (str(b.assemblyType, 40) || 'Other') : '', category: str(b.category, 30), itemId: null, itemRef: '',
       }];
     }
-    for (const d of docs) {
-      d._id = crypto.randomUUID();
-      d.tag = tagOf(d.seq);
-      d.history = [{ at: now, by, action: 'registered', note: d.itemRef ? `From stock ${d.itemRef} into ${placeNote}` : `Registered in ${placeNote}` }];
-      d.searchText = textOf(d);
-      await assets.insertOne(d);
-    }
-    res.status(201).json({ assets: docs.map(strip) });
+    res.status(201).json({ assets: await saveNew(docs, by, now, placeNote) });
   }));
 
   // ── Change ────────────────────────────────────────────────
