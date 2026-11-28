@@ -15,6 +15,7 @@
  *   GET   /users                 directory (everyone signed in); HR records only for founder/hr
  *   POST  /users                 add a person (founder, hr)
  *   PATCH /users/:id             role, team, title, active, HR records (founder, hr)
+ *   POST  /users/:id/lead-powers { grant: true|false } give an employee lead powers or take them back (founder, hr, super user)
  *   POST  /users/:id/password    set a temporary password; they must change it at next sign-in (founder, hr)
  *
  * Super user: a hidden account above Founder, made from SUPERUSER_EMAIL and SUPERUSER_PASSWORD in the
@@ -27,7 +28,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const { ROLES, SUPERUSER, can, permissionsOf, isTop } = require('./permissions');
+const { ROLES, SUPERUSER, can, permissionsOf, isTop, hasLeadPowers } = require('./permissions');
 const { createRateLimiter } = require('./rateLimit');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -66,6 +67,8 @@ function publicUser(u, viewer) {
     _id: u._id, name: u.name, email: u.email, phone: u.phone || '', role: u.role, team: u.team || '',
     title: u.title || '', active: u.active !== false,
   };
+  // Lead powers are not secret: colleagues should know who runs their team.
+  if (hasLeadPowers(u)) out.leadPowers = { by: u.leadPowers.by || '', at: u.leadPowers.at || null };
   const self = viewer && viewer._id === u._id;
   if (self || can(viewer, 'users.hr_records')) {
     out.hr = u.hr || {};
@@ -221,7 +224,7 @@ function createAuth({ db, config, cache = null }) {
     return users.findOne({ _id: current._id });
   }
 
-  const me = (u) => ({ user: publicUser(u, u), permissions: permissionsOf(u.role) });
+  const me = (u) => ({ user: publicUser(u, u), permissions: permissionsOf(u) });
 
   router.get('/auth/status', wrap(async (req, res) => {
     res.json({ needsSetup: (await users.countDocuments(VISIBLE)) === 0, setupKeyConfigured: !!setupKey, company: config.COMPANY_NAME, tz: config.COMPANY_TZ });
@@ -294,7 +297,7 @@ function createAuth({ db, config, cache = null }) {
     res.json({ users: list.map((u) => publicUser(u, req.user)) });
   }));
 
-  // HR may not create or change founders; only a founder makes another founder.
+  // Only the top (founders, HR, the super user) may create or change founders.
   const roleAllowed = (actor, role) => isTop(actor) || role !== 'founder';
   const findVisible = (id) => users.findOne({ _id: String(id), ...VISIBLE });
 
@@ -327,8 +330,25 @@ function createAuth({ db, config, cache = null }) {
       const founders = await users.countDocuments({ ...VISIBLE, role: 'founder', active: { $ne: false } });
       if (founders <= 1) return res.status(400).json({ error: 'There must be at least one active founder' });
     }
+    // Lead powers belong to employees only: a new role drops them (a lead or founder has them anyway).
+    if (value.role && value.role !== 'employee' && target.leadPowers) value.leadPowers = null;
     await users.updateOne({ _id: target._id }, { $set: { ...value, updatedAt: new Date() } });
     if (value.active === false) await sessions.deleteMany({ userId: target._id });
+    res.json({ user: publicUser(await users.findOne({ _id: target._id }), req.user) });
+  }));
+
+  // Give one employee lead powers (they lead a team but stay an Employee), or take them back.
+  router.post('/users/:id/lead-powers', requireUser('users.grant_lead'), wrap(async (req, res) => {
+    const target = await findVisible(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Person not found' });
+    if (typeof req.body?.grant !== 'boolean') return res.status(400).json({ error: 'Send { grant: true } or { grant: false }' });
+    if (target.role !== 'employee') return res.status(400).json({ error: `Only employees can be given lead powers; ${target.name} already has their own role's powers` });
+    if (target._id === req.user._id) return res.status(400).json({ error: 'You cannot change your own powers' });
+    const now = new Date();
+    const update = req.body.grant
+      ? { $set: { leadPowers: { by: req.user.hidden ? 'Nextup' : req.user.name, byId: req.user._id, at: now }, updatedAt: now } }
+      : { $set: { leadPowers: null, updatedAt: now } };
+    await users.updateOne({ _id: target._id }, update);
     res.json({ user: publicUser(await users.findOne({ _id: target._id }), req.user) });
   }));
 

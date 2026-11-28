@@ -191,6 +191,7 @@ are real dates.
 | `name`, `email` | string | email is unique, lower case, and is the sign-in name |
 | `phone`, `title`, `team` | string | a lead looks after everyone with the same `team` |
 | `role` | `founder` \| `hr` \| `lead` \| `employee` | what each can do is in `src/permissions.js` |
+| `leadPowers` | `{by, byId, at}` \| null | an employee given lead powers by a founder, HR or the super user (1.13): they get every lead permission. Cleared when taken back or when the role changes |
 | `hidden` | bool | only on the super user (`role: superuser`), made from `SUPERUSER_EMAIL` / `SUPERUSER_PASSWORD`; left out of every list and count |
 | `active` | bool | switched-off accounts cannot sign in and are hidden from lists |
 | `passwordHash` | string | `scrypt$<salt>$<hash>`. Never sent out |
@@ -350,6 +351,7 @@ temporary password is changed).
 | `POST /auth/logout`, `GET /auth/me`, `PATCH /auth/me` | signed in | own name and phone |
 | `POST /auth/password` | signed in | `{current, password}`; signs out other devices |
 | `GET /users?all=true` | everyone (`all` for HR, founders) | directory |
+| `POST /users/:id/lead-powers` | HR, founders, super user | `{grant: true\|false}`: give an employee lead powers or take them back |
 | `POST /users`, `PATCH /users/:id`, `POST /users/:id/password` | HR, founders | add (returns `temporaryPassword`), change, reset password |
 | `GET /home` | signed in | counts for the home page, by role |
 | `GET /stream` | signed in | server-sent events: `change {area}` (reload), `notify {kind, id, ref, title, body}` for new enquiries (`enquiries.view`) and bug reports (`bugs.view`) |

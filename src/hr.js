@@ -25,7 +25,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const { can, isTop } = require('./permissions');
+const { can, isTop, hasLeadPowers } = require('./permissions');
 const D = require('./dates');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -52,7 +52,7 @@ function createHr({ db, config, requireUser, publicUser }) {
 
   // ── Helpers ─────────────────────────────────────────────────
   const activeUsers = () => users.find({ active: { $ne: false }, hidden: { $ne: true } }).sort({ name: 1 }).toArray();
-  /** People a lead looks after: same team, not founders, not themselves. */
+  /** People a lead (or an employee with lead powers) looks after: same team, not founders or HR, not themselves. */
   const isTeamMember = (lead, u) => !!lead.team && u.team === lead.team && u._id !== lead._id && !isTop(u);
 
   /** Whose attendance and leave this person may see. */
@@ -66,7 +66,7 @@ function createHr({ db, config, requireUser, publicUser }) {
     if (owner._id === viewer._id) return isTop(viewer) && can(viewer, 'leave.approve_all');
     if (isTop(owner) && !isTop(viewer)) return false;
     if (can(viewer, 'leave.approve_all')) return true;
-    return can(viewer, 'leave.approve_team') && isTeamMember(viewer, owner) && owner.role === 'employee';
+    return can(viewer, 'leave.approve_team') && isTeamMember(viewer, owner) && owner.role === 'employee' && !hasLeadPowers(owner);
   }
 
   async function holidayMap(from, to) {

@@ -39,8 +39,8 @@ test('assets: a project tree down to the bolts, from stock and back', async () =
   assert.strictEqual(bolts.tracking, 'lot');
   assert.strictEqual(drive.tracking, 'unit');
 
-  // HR cannot; employees can.
-  assert.strictEqual((await hub.call('POST', '/assets', { kind: 'assembly', name: 'Panel', projectId: prj._id }, { token: hr.token })).status, 403);
+  // HR has founder powers (1.13), so assets too; employees can.
+  assert.ok((await hub.call('GET', '/auth/me', null, { token: hr.token })).body.permissions.includes('assets.manage'));
   const panel = (await hub.call('POST', '/assets', { kind: 'assembly', assemblyType: 'Panel', name: 'Main panel', projectId: prj._id }, { token: emp.token })).body.assets[0];
   assert.match(panel.tag, /^NX-000001-[A-Z]$/);
   const arm = (await hub.call('POST', '/assets', { kind: 'assembly', assemblyType: 'Robot arm', name: 'Robot arm', projectId: prj._id }, { token: emp.token })).body.assets[0];
@@ -171,6 +171,6 @@ test('assign to project: many store items at once, all or nothing, history kept;
   assert.deepStrictEqual(Object.fromEntries(list.map((i) => [i.name, [i.quantity, i.inProjects]])), { 'CPU i5': [3, 1], 'M6 bolt': [176, 24], Mouse: [9, 1], 'Servo drive': [4, 2] });
   // The assembly now shows up for the next assignment.
   assert.deepStrictEqual((await hub.call('GET', '/inventory/projects')).body.projects[0].assemblies.map((a) => a.name), ['Computer']);
-  // A signed-in HR person is still held to their role (no asset access).
-  assert.strictEqual((await hub.call('POST', '/assets/assign', { projectId: prj._id, items: [{ itemId: mouse._id, quantity: 1 }] }, { token: hr.token })).status, 403);
+  // A signed-in employee without asset rights would be held to their role; HR has founder powers, so may assign.
+  assert.strictEqual((await hub.call('POST', '/assets/assign', { projectId: prj._id, items: [{ itemId: mouse._id, quantity: 1 }] }, { token: hr.token })).status, 201);
 });

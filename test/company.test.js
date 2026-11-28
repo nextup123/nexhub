@@ -72,11 +72,11 @@ test('sign-in attempts are rate limited', async () => {
   assert.strictEqual(last.status, 429);
 });
 
-test('HR manages people but cannot touch founders; switching someone off signs them out', async () => {
+test('HR has founder powers over people; switching someone off signs them out', async () => {
   const { hub, founder, hr, emp, as } = await company();
-  assert.strictEqual((await as(hr)('POST', '/users', { name: 'New Founder', email: 'nf@nextup.test', role: 'founder' })).status, 403);
+  assert.strictEqual((await as(hr)('POST', '/users', { name: 'New Founder', email: 'nf@nextup.test', role: 'founder' })).status, 201, 'HR can add a founder, like a founder can');
   const me = await as(founder)('GET', '/auth/me');
-  assert.strictEqual((await as(hr)('PATCH', `/users/${me.body.user._id}`, { team: 'X' })).status, 403);
+  assert.strictEqual((await as(hr)('PATCH', `/users/${me.body.user._id}`, { team: 'Management' })).status, 200);
   assert.strictEqual((await as(emp)('POST', '/users', { name: 'Y', email: 'y@nextup.test', role: 'employee' })).status, 403, 'employees cannot add people');
   // Directory: everyone sees names and roles; HR records only for founder, HR and the person.
   await as(hr)('PATCH', `/users/${emp.user._id}`, { hr: { employeeId: 'NX-014', joinedOn: '2025-06-02', emergencyContact: 'Sunita, +91 98100 00000' } });
@@ -94,11 +94,58 @@ test('HR manages people but cannot touch founders; switching someone off signs t
 
 test('each role gets the permissions in the table', () => {
   assert.ok(permissionsOf('founder').includes('enquiries.delete'));
-  assert.ok(!permissionsOf('hr').includes('enquiries.view'));
-  assert.ok(!permissionsOf('hr').includes('bugs.view'));
+  for (const p of permissionsOf('founder')) assert.ok(permissionsOf('hr').includes(p), `HR should have ${p} like a founder`);
+  assert.ok(permissionsOf('hr').includes('projects.delete'));
+  assert.ok(!permissionsOf('lead').includes('users.grant_lead'));
+  assert.ok(permissionsOf({ role: 'employee', leadPowers: { by: 'Meena' } }).includes('projects.manage'));
+  assert.ok(!permissionsOf({ role: 'employee', leadPowers: { by: 'Meena' } }).includes('projects.delete'));
   assert.ok(permissionsOf('lead').includes('production.manage'));
   assert.ok(!permissionsOf('employee').includes('production.manage'));
   assert.ok(permissionsOf('employee').includes('leave.self'));
+});
+
+test('lead powers: founders, HR and the super user give an employee lead powers and take them back', async () => {
+  const { hub, founder, hr, lead, emp, other, as } = await company({ SUPERUSER_EMAIL: 'root@nextup.test', SUPERUSER_PASSWORD: 'super-secret-9' });
+  const grant = (who, target, g) => as(who)('POST', `/users/${target.user._id}/lead-powers`, { grant: g });
+  // Before: an employee cannot create a project or a client.
+  assert.strictEqual((await as(emp)('POST', '/projects', { name: 'Line 4', customer: { company: 'Tata' } })).status, 403);
+  // Only founders, HR and the super user may grant.
+  assert.strictEqual((await grant(lead, emp, true)).status, 403, 'a lead cannot grant');
+  assert.strictEqual((await grant(other, emp, true)).status, 403, 'an employee cannot grant');
+  assert.strictEqual((await grant(founder, lead, true)).status, 400, 'only employees get lead powers');
+  assert.strictEqual((await as(hr)('POST', `/users/${emp.user._id}/lead-powers`, {})).status, 400);
+  const g = await grant(hr, emp, true);
+  assert.strictEqual(g.status, 200);
+  assert.strictEqual(g.body.user.leadPowers.by, 'Meena');
+  assert.strictEqual(g.body.user.role, 'employee', 'the role stays Employee');
+  // Now they have every lead permission, but not founder-only ones.
+  const me = (await as(emp)('GET', '/auth/me')).body;
+  for (const p of ['projects.manage', 'clients.manage', 'production.manage', 'assets.manage', 'attendance.team', 'leave.approve_team', 'bugs.triage', 'enquiries.view']) assert.ok(me.permissions.includes(p), p);
+  assert.ok(!me.permissions.includes('projects.delete'));
+  assert.ok(!me.permissions.includes('users.grant_lead'));
+  assert.ok(me.user.leadPowers);
+  const made = await as(emp)('POST', '/projects', { name: 'Line 4', customer: { company: 'Tata' } });
+  assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+  // Everyone sees who has lead powers in the directory.
+  assert.ok((await as(other)('GET', '/users')).body.users.find((u) => u._id === emp.user._id).leadPowers);
+  // Take back: the next request is refused again.
+  assert.strictEqual((await grant(founder, emp, false)).status, 200);
+  assert.strictEqual((await as(emp)('POST', '/projects', { name: 'Line 5', customer: { company: 'Tata' } })).status, 403);
+  assert.ok(!(await as(emp)('GET', '/auth/me')).body.user.leadPowers);
+  // The super user can grant too; a role change away from Employee drops the powers.
+  const root = await hub.call('POST', '/auth/login', { email: 'root@nextup.test', password: 'super-secret-9' });
+  assert.strictEqual(root.status, 200);
+  assert.strictEqual((await grant({ token: root.body.token }, other, true)).status, 200);
+  assert.strictEqual((await as(founder)('PATCH', `/users/${other.user._id}`, { role: 'lead' })).status, 200);
+  assert.strictEqual((await as(founder)('PATCH', `/users/${other.user._id}`, { role: 'employee' })).status, 200);
+  assert.ok(!(await as(other)('GET', '/auth/me')).body.user.leadPowers);
+});
+
+test('HR can delete like a founder', async () => {
+  const { founder, hr, as } = await company();
+  const p = await as(founder)('POST', '/projects', { name: 'Old line', customer: { company: 'Acme' } });
+  assert.strictEqual(p.status, 201, JSON.stringify(p.body));
+  assert.strictEqual((await as(hr)('DELETE', `/projects/${p.body.project._id}`)).status, 200);
 });
 
 // ── Attendance ────────────────────────────────────────────────
@@ -210,7 +257,7 @@ test('production: units get serials and stages; employees tick off only their ow
   assert.strictEqual(b.body.unit.serial, 'NX-C5-0002');
   assert.strictEqual(b.body.unit.colour, 'White');
   assert.strictEqual((await as(emp)('POST', '/units', { model: 'NexR10' })).status, 403);
-  assert.strictEqual((await as(hr)('GET', '/units')).status, 403, 'HR does not see production');
+  assert.strictEqual((await as(hr)('GET', '/units')).status, 200, 'HR sees production like a founder');
 
   const id = a.body.unit._id;
   // Employees cannot change a stage that is not theirs.
@@ -260,7 +307,7 @@ test('a late unit is flagged, and target dates show on the calendar for producti
   const leadCal = await as(lead)('GET', `/calendar?from=${yesterday}&to=${yesterday}`);
   assert.ok(leadCal.body.items.some((i) => i.type === 'unit'));
   const hrCal = await as(hr)('GET', `/calendar?from=${yesterday}&to=${yesterday}`);
-  assert.ok(!hrCal.body.items.some((i) => i.type === 'unit'));
+  assert.ok(hrCal.body.items.some((i) => i.type === 'unit'));
 });
 
 // ── Bug reports ───────────────────────────────────────────────
@@ -268,7 +315,7 @@ test('bugs: robots still report without signing in; roles decide who reads and t
   const { hub, emp, lead, hr, as } = await company();
   const r = await hub.call('POST', '/apps/ethercat_config_tool/bugs', { title: 'Homing stops on J3', description: 'x', reporter: { name: 'Vendor', phone: '+91 90000 00000', email: 'v@example.com' } });
   assert.strictEqual(r.status, 201);
-  assert.strictEqual((await as(hr)('GET', '/bugs')).status, 403);
+  assert.strictEqual((await as(hr)('GET', '/bugs')).status, 200, 'HR reads bugs like a founder');
   const empList = await as(emp)('GET', '/bugs');
   assert.strictEqual(empList.body.total, 1);
   assert.strictEqual(empList.body.bugs[0].reporter.phone, undefined, 'employees do not get customer phone numbers');

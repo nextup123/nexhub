@@ -91,15 +91,14 @@ test('live: dashboards hear about changes, and alerts only reach roles that may 
   assert.match(n.body, /\+91 98450 00000/);
   await settle();
   assert.ok(!sEmp.events.some((e) => e.event === 'notify'));
-  assert.ok(!sHr.events.some((e) => e.event === 'notify'));
+  await until(() => sHr.events.some((e) => e.event === 'notify' && e.data.kind === 'enquiry')); // HR has founder powers
 
-  // A bug report: everyone who sees bugs (lead, employee), not HR.
+  // A bug report: everyone who sees bugs (lead, employee, and HR like a founder).
   assert.strictEqual((await hub.call('POST', '/apps/main_app/bugs', BUG)).status, 201);
   await until(() => sEmp.events.some((e) => e.event === 'notify' && e.data.kind === 'bug'));
   assert.match(sEmp.events.find((e) => e.data.kind === 'bug').data.title, /^New bug report MAIN-\d+ \(high\): Drive J3/);
   await until(() => sLead.events.some((e) => e.event === 'notify' && e.data.kind === 'bug'));
-  await settle();
-  assert.ok(!sHr.events.some((e) => e.event === 'notify'));
+  await until(() => sHr.events.some((e) => e.event === 'notify' && e.data.kind === 'bug'));
 
   // Telegram got both alerts, in every chat.
   await until(() => tg.sent.length === 4);

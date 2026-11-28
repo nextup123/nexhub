@@ -30,7 +30,7 @@ test('clients: one client, many projects; contacts only for its project teams', 
   assert.strictEqual(a.body.project.clientId, b.body.project.clientId, 'the same company is one client');
   const cid = a.body.project.clientId;
   assert.strictEqual(b.body.project.customer.company, 'Verma CNC Works');
-  assert.strictEqual((await as(hr)('GET', '/clients')).status, 403);
+  assert.strictEqual((await as(hr)('GET', '/clients')).status, 200, 'HR sees clients like a founder');
   assert.strictEqual((await as(emp)('POST', '/clients', { name: 'X' })).status, 403);
 
   await as(lead)('PATCH', `/clients/${cid}`, { industry: 'CNC machining', contacts: [{ name: 'Mr. Verma', role: 'Owner', phone: '+91 98100 00000' }] });

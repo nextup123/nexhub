@@ -23,7 +23,7 @@ const CUSTOMER = { company: 'Verma CNC Works', city: 'Faridabad', site: 'Plot 12
 test('projects: create, team, robots, and who sees the customer contact', async () => {
   const { lead, emp, other, hr, as } = await company();
   assert.strictEqual((await as(emp)('POST', '/projects', { name: 'X' })).status, 403, 'employees do not create projects');
-  assert.strictEqual((await as(hr)('GET', '/projects')).status, 403, 'HR does not see projects');
+  assert.strictEqual((await as(hr)('GET', '/projects')).status, 200, 'HR sees projects like a founder');
 
   const p = await as(lead)('POST', '/projects', { name: 'CNC machine tending', customer: CUSTOMER, application: 'Machine tending', team: [{ userId: emp.user._id, role: 'Site engineer' }] });
   assert.strictEqual(p.status, 201);
@@ -142,7 +142,7 @@ test('projects: search finds problems, solutions and visits across projects', as
   // A regular-expression character is just a character.
   assert.strictEqual((await as(emp)('GET', '/projects/search?q=(j2')).status, 200);
   assert.strictEqual((await as(emp)('GET', '/projects/search?q=')).status, 400);
-  assert.strictEqual((await as(hr)('GET', '/projects/search?q=j2')).status, 403);
+  assert.strictEqual((await as(hr)('GET', '/projects/search?q=j2')).status, 200);
 
   // Renaming a project keeps its record findable under the new name.
   await as(lead)('PATCH', `/projects/${b.body.project._id}`, { name: 'Bag palletiser' });

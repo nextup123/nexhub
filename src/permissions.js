@@ -5,11 +5,16 @@
  * dashboard (GET /auth/me), so menus only show what a person can open.
  *
  *   founder   everything
- *   hr        people: accounts, attendance, leave, holidays, calendar. No customer data, no bugs, no production.
+ *   hr        everything a founder can do (since 1.13: HR got every founder power, including deletes)
  *   lead      runs a team: production, bug triage, website enquiries, their team's attendance and leave
  *   inventory view + export: everyone; add, edit, import: founder, hr, lead; delete: founder
  *   employee  their own attendance and leave, the calendar, production (updates the stages given to them),
  *             projects (read, log problems and site visits), bug reports (read and comment)
+ *
+ * Lead powers (since 1.13): founders, HR and the super user can give one employee lead powers (a person
+ * who leads a team but keeps the Employee role). They then get every permission a lead has (create and run
+ * projects, clients, production, assets, their team's attendance and leave) until the powers are taken back.
+ * See POST /users/:id/lead-powers in src/auth.js.
  *
  * Personal data stays narrow: website enquiries (customer names, phones) are founder + lead only,
  * HR records (joining date, employee id, emergency contact) are founder + hr only (and the person),
@@ -27,6 +32,7 @@ const PERMISSIONS = {
   'users.view': ALL,                         // directory: name, role, team, title, work email and phone
   'users.manage': ['founder', 'hr'],         // add people, change roles and teams, reset passwords, deactivate
   'users.hr_records': ['founder', 'hr'],     // joining date, employee id, emergency contact
+  'users.grant_lead': ['founder', 'hr'],     // give an employee lead powers, or take them back
   // attendance and leave
   'attendance.self': ALL,
   'attendance.team': ['lead'],               // their own team
@@ -74,9 +80,22 @@ const PERMISSIONS = {
   'apps.manage': ['founder'],
 };
 
-const can = (user, perm) => !!user && user.active !== false && (user.role === SUPERUSER ? perm in PERMISSIONS : (PERMISSIONS[perm] || []).includes(user.role));
-const permissionsOf = (role) => Object.keys(PERMISSIONS).filter((p) => role === SUPERUSER || PERMISSIONS[p].includes(role));
-/** Founders and the super user: the top of the company. */
-const isTop = (user) => !!user && (user.role === 'founder' || user.role === SUPERUSER);
+// HR has every power a founder has: wherever the table says founder, HR may do it too.
+for (const list of Object.values(PERMISSIONS)) if (list.includes('founder') && !list.includes('hr')) list.push('hr');
 
-module.exports = { ROLES, ROLE_LABELS, PERMISSIONS, SUPERUSER, can, permissionsOf, isTop };
+/** An employee who was given lead powers (see the top of this file). */
+const hasLeadPowers = (user) => !!user && user.role === 'employee' && !!user.leadPowers;
+/** The roles whose permissions this person has: their own, plus lead for an employee with lead powers. */
+const rolesOf = (user) => (!user ? [] : hasLeadPowers(user) ? ['employee', 'lead'] : [user.role]);
+
+const can = (user, perm) => !!user && user.active !== false
+  && (user.role === SUPERUSER ? perm in PERMISSIONS : rolesOf(user).some((r) => (PERMISSIONS[perm] || []).includes(r)));
+/** Every permission of a person (a user object) or of a role (a string). */
+const permissionsOf = (who) => {
+  const roles = typeof who === 'string' ? [who] : rolesOf(who);
+  return Object.keys(PERMISSIONS).filter((p) => roles.includes(SUPERUSER) || PERMISSIONS[p].some((r) => roles.includes(r)));
+};
+/** The top of the company: founders, HR (same powers as a founder) and the super user. */
+const isTop = (user) => !!user && (user.role === 'founder' || user.role === 'hr' || user.role === SUPERUSER);
+
+module.exports = { ROLES, ROLE_LABELS, PERMISSIONS, SUPERUSER, can, permissionsOf, isTop, hasLeadPowers, rolesOf };

@@ -93,7 +93,7 @@ test('only the listed website may post when CONTACT_ORIGINS is set', async () =>
   assert.strictEqual((await call('POST', '/contact', form(1), { origin: 'https://nextuprobotics.com' })).status, 201);
 });
 
-test('enquiries need a signed-in founder or lead; HR and employees are refused', async () => {
+test('enquiries need a signed-in founder, HR or lead; employees are refused', async () => {
   const call = await start();
   await call('POST', '/contact', form(1));
   assert.strictEqual((await call('GET', '/contact-submissions')).status, 401);
@@ -106,7 +106,7 @@ test('enquiries need a signed-in founder or lead; HR and employees are refused',
   const hrUser = await hub.person(founderToken, { name: 'Meena HR', email: 'hr@nextup.test', role: 'hr', team: 'People' });
   const emp = await hub.person(founderToken, { name: 'Ravi', email: 'ravi@nextup.test', role: 'employee' });
   const lead = await hub.person(founderToken, { name: 'Anil Lead', email: 'lead@nextup.test', role: 'lead' });
-  assert.strictEqual((await hub.call('GET', '/contact-submissions', null, { token: hrUser.token })).status, 403);
+  assert.strictEqual((await hub.call('GET', '/contact-submissions', null, { token: hrUser.token })).status, 200, 'HR has founder powers');
   assert.strictEqual((await hub.call('GET', '/contact-submissions', null, { token: emp.token })).status, 403);
   assert.strictEqual((await hub.call('GET', '/contact-submissions', null, { token: lead.token })).status, 200);
   const id = list.body.submissions[0]._id;

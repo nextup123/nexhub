@@ -240,45 +240,53 @@ on a team or given a build stage, and the dashboard cannot change, reset or swit
 | | Founder | HR | Lead | Employee |
 |---|---|---|---|---|
 | Directory (names, team, work email, phone) | ✓ | ✓ | ✓ | ✓ |
-| Add people, change roles, reset passwords | ✓ | ✓ (not founders) | | |
+| Add people, change roles, reset passwords | ✓ | ✓ | | |
 | HR records (employee id, joining date, emergency contact) | ✓ | ✓ | own | own |
 | Own attendance and leave, company calendar | ✓ | ✓ | ✓ | ✓ |
 | Team's attendance, approve team's leave | ✓ | ✓ | own team | |
 | Everyone's attendance, correct it, approve anyone's leave, holidays | ✓ | ✓ | | |
 | Add calendar events | ✓ | ✓ | ✓ | |
-| Projects and their whole record (problems, solutions, site visits, notes), search | ✓ | | ✓ | ✓ |
-| Clients, their projects, robots and equipment | ✓ | | ✓ | ✓ |
-| Client contacts' phone and email | ✓ | | ✓ | the teams of its projects |
-| Add and change clients, equipment on a project | ✓ | | ✓ | |
-| Delete clients (only with no projects) | ✓ | | | |
-| Record a robot's software version | ✓ | | ✓ | ✓ (robots on a project) |
-| Customer contact at a project's site | ✓ | | ✓ | the project's team |
-| Log problems, solutions, site visits and notes | ✓ | | ✓ | ✓ (change or delete their own) |
-| Create projects, change team, robots, status | ✓ | | ✓ | |
-| Delete projects | ✓ | | | |
-| Robots in the build | ✓ | | ✓ | ✓ |
-| Add robots, change dates, give stages to people | ✓ | | ✓ | |
-| Tick off build stages given to you | ✓ | | ✓ | ✓ |
-| Delete robots | ✓ | | | |
-| Website enquiries (customer names, emails, phones) | ✓ | | ✓ | |
-| Delete enquiries | ✓ | | | |
-| Read and comment on bug reports | ✓ | | ✓ | ✓ (no customer phone/email) |
-| Change bug status and priority, publish release notes | ✓ | | ✓ | |
-| Add or change the apps | ✓ | | | |
+| Projects and their whole record (problems, solutions, site visits, notes), search | ✓ | ✓ | ✓ | ✓ |
+| Clients, their projects, robots and equipment | ✓ | ✓ | ✓ | ✓ |
+| Client contacts' phone and email | ✓ | ✓ | ✓ | the teams of its projects |
+| Add and change clients, equipment on a project | ✓ | ✓ | ✓ | |
+| Delete clients (only with no projects) | ✓ | ✓ | | |
+| Record a robot's software version | ✓ | ✓ | ✓ | ✓ (robots on a project) |
+| Customer contact at a project's site | ✓ | ✓ | ✓ | the project's team |
+| Log problems, solutions, site visits and notes | ✓ | ✓ | ✓ | ✓ (change or delete their own) |
+| Create projects, change team, robots, status | ✓ | ✓ | ✓ | |
+| Delete projects | ✓ | ✓ | | |
+| Robots in the build | ✓ | ✓ | ✓ | ✓ |
+| Add robots, change dates, give stages to people | ✓ | ✓ | ✓ | |
+| Tick off build stages given to you | ✓ | ✓ | ✓ | ✓ |
+| Delete robots | ✓ | ✓ | | |
+| Website enquiries (customer names, emails, phones) | ✓ | ✓ | ✓ | |
+| Delete enquiries | ✓ | ✓ | | |
+| Read and comment on bug reports | ✓ | ✓ | ✓ | ✓ (no customer phone/email) |
+| Change bug status and priority, publish release notes | ✓ | ✓ | ✓ | |
+| Add or change the apps | ✓ | ✓ | | |
 | Inventory: see every group, search, export PDF and Excel | ✓ | ✓ | ✓ | ✓ |
 | Inventory: add, edit, stock in/out, CSV import | ✓ | ✓ | ✓ | |
-| Inventory: delete items | ✓ | | | |
-| Assets: see and build project trees, take parts from stock, return, move, labels | ✓ | | ✓ | ✓ |
-| Assets: delete a tag made by mistake | ✓ | | | |
+| Inventory: delete items | ✓ | ✓ | | |
+| Assets: see and build project trees, take parts from stock, return, move, labels | ✓ | ✓ | ✓ | ✓ |
+| Assets: delete a tag made by mistake | ✓ | ✓ | | |
 
 (Inventory rows apply with `INVENTORY_OPEN=false`; while it is on, the inventory needs no sign-in.)
 
 The reasoning: customer contact details (enquiries, bug reporters) stay with founders and leads, and a
 project's site contact also with its team, who need it on site. Every engineer can read every project,
 so a problem solved at one site helps at the next;
-HR handles people data but not customers or production; employees see the work they do. A lead looks
+HR has every power a founder has (since 1.13); employees see the work they do. A lead looks
 after everyone in the same **team** (Production, Software, Sales…). Nobody can change their own role,
-nobody approves their own leave (except a founder), and the last founder cannot be removed.
+nobody approves their own leave (except a founder or HR), and the last founder cannot be removed.
+**Lead powers (1.13).** Founders, HR and the super user can give one employee *lead powers*: someone who
+leads a team but stays an Employee. They then have every Lead permission in the table above (create and run
+projects, clients, production, assets, bug triage, enquiries, their own team's attendance and leave) and keep
+everything an employee has, until the powers are taken back. Everyone sees a green **+ Lead powers** tag
+next to their role. In the dashboard: People › edit the person › Give lead powers / Take back lead powers.
+API: `POST /users/:id/lead-powers {"grant": true}` (or `false`), permission `users.grant_lead`. Only
+employees can get them (not yourself), and a role change away from Employee drops them.
+
 The table lives in `src/permissions.js`; the server checks it on every request and the dashboard
 uses the same table to hide what you cannot use.
 
@@ -382,7 +390,7 @@ Moving an assembly moves everything inside it. Every change is in the asset's hi
 | `DELETE /assets/:id` | a tag made by mistake: removed, stock put back (founder) |
 
 Who: founders, leads and employees see and build the trees (every change is logged with their name);
-only founders delete. HR does not see projects, so not assets either. Collection `assets`, counter `asset`.
+only founders and HR delete. Collection `assets`, counter `asset`.
 New dependency: `qrcode`.
 
 ### Inventory (1.10, five groups since 1.11)

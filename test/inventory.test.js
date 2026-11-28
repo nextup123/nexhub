@@ -61,9 +61,9 @@ test('inventory: add, list, edit, adjust, delete, with roles', async () => {
   const sum = await hub.call('GET', '/inventory/summary', null, { token: emp.token });
   assert.deepStrictEqual(sum.body.categories.map((c) => [c.key, c.items, c.quantity, c.low]), [['it', 2, 8, 1], ['electrical', 1, 12, 0], ['raw_material', 0, 0, 0], ['mechanical', 2, 9, 0], ['machinery', 0, 0, 0]]);
 
-  // Delete: founder only.
-  assert.strictEqual((await hub.call('DELETE', `/inventory/${id}`, null, { token: hr.token })).status, 403);
-  assert.strictEqual((await hub.call('DELETE', `/inventory/${id}`, null, { token: founder })).status, 200);
+  // Delete: founder and HR (HR has founder powers).
+  assert.strictEqual((await hub.call('DELETE', `/inventory/${id}`, null, { token: hr.token })).status, 200);
+  assert.strictEqual((await hub.call('DELETE', `/inventory/${id}`, null, { token: founder })).status, 404);
   assert.strictEqual((await hub.call('GET', `/inventory/${id}`, null, { token: founder })).status, 404);
   // The cached list does not keep the deleted item.
   assert.strictEqual((await hub.call('GET', '/inventory?category=it', null, { token: emp.token })).body.items.length, 1);
